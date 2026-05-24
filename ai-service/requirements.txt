@@ -1,0 +1,32 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+
+# Database
+sqlalchemy[asyncio]
+asyncpg
+alembic
+
+# PDF extraction
+pymupdf
+pillow
+pytesseract
+
+# NLP + Embeddings
+sentence-transformers
+spacy
+
+# Vector search
+faiss-cpu
+
+# LLM
+transformers
+torch
+openai
+
+# HTTP
+httpx
+
+# Utilities
+python-multipart
+python-dotenv

@@ -1,33 +1,41 @@
 {
   "name": "ledgerx-fullstack",
   "version": "1.0.0",
-  "description": "LedgerX - Personal Finance Management System (Full Stack)",
+  "description": "DocLens AI - Knowledge Graph-Driven Research Intelligence Platform",
   "private": true,
   "scripts": {
-    "install:all": "npm install --prefix frontend && npm install --prefix backend",
-    "dev:frontend": "npm run dev --prefix frontend",
-    "dev:backend": "npm run start:dev --prefix backend",
-    "build:frontend": "npm run build --prefix frontend",
-    "build:backend": "npm run build --prefix backend",
+    "install:all": "npm install --workspaces",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run start:dev --workspace backend",
+    "build:frontend": "npm run build --workspace frontend",
+    "build:backend": "npm run build --workspace backend",
     "build:all": "npm run build:backend && npm run build:frontend",
-    "start:frontend": "npm run preview --prefix frontend",
-    "start:backend": "npm run start:prod --prefix backend",
-    "prisma:generate": "npm run prisma:generate --prefix backend",
-    "prisma:migrate": "npm run prisma:migrate --prefix backend",
-    "prisma:studio": "npm run prisma:studio --prefix backend",
-    "test:frontend": "npm run test --prefix frontend",
-    "test:backend": "npm run test --prefix backend",
-    "lint:frontend": "npm run lint --prefix frontend",
-    "lint:backend": "npm run lint --prefix backend"
+    "start:frontend": "npm run preview --workspace frontend",
+    "start:backend": "npm run start:prod --workspace backend",
+    "prisma:generate": "npm run prisma:generate --workspace backend",
+    "prisma:migrate": "npm run prisma:migrate --workspace backend",
+    "prisma:studio": "npm run prisma:studio --workspace backend",
+    "test:frontend": "npm run build --workspace frontend",
+    "test:backend": "npm run test --workspace backend",
+    "lint:frontend": "npm run lint --workspace frontend",
+    "lint:backend": "npm run lint --workspace backend"
   },
   "workspaces": [
     "frontend",
     "backend"
   ],
+  "overrides": {
+    "@hono/node-server": "$@hono/node-server",
+    "@prisma/dev@0.24.3": {
+      "@hono/node-server": "$@hono/node-server"
+    },
+    "fast-uri": "$fast-uri",
+    "hono": "$hono"
+  },
   "keywords": [
-    "finance",
-    "expense-tracker",
-    "budgeting",
+    "research",
+    "knowledge-graph",
+    "retrieval-augmented-generation",
     "react",
     "nestjs",
     "postgresql",
@@ -39,5 +47,15 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/aishwary-vansh/ledgerx-fullstack"
+  },
+  "devDependencies": {
+    "@hono/node-server": "^1.19.13",
+    "@nestjs/common": "^11.1.23",
+    "@nestjs/core": "^11.1.23",
+    "@nestjs/platform-express": "^11.1.23",
+    "@nestjs/platform-socket.io": "^11.1.23",
+    "@nestjs/websockets": "^11.1.23",
+    "fast-uri": "^3.1.2",
+    "hono": "^4.12.22"
   }
 }

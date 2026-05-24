@@ -1,308 +1,167 @@
-# LedgerX - Personal Finance Management System
+# DocLens AI
 
-A full-stack personal finance application with expense tracking, analytics, and budgeting features.
+**A Product-Focused Research Intelligence Platform**
 
-## 🏗️ Architecture
+DocLens AI is a full-stack platform designed to transform static research papers into an interactive intelligence system. It provides researchers with powerful semantic search, high-accuracy Retrieval-Augmented Generation (RAG), and a direct line of sight from AI-generated answers back to the original source text.
 
-This is a monorepo containing both frontend and backend:
+*DocLens focuses on delivering robust, grounded AI features without the hallucination risks or brittleness of complex, speculative pipelines.*
 
-```
-ledgerx-fullstack/
-├── frontend/          # React + Vite + TailwindCSS
-├── backend/           # NestJS + PostgreSQL + Prisma
-└── README.md          # You are here
-```
+---
 
-## 🚀 Tech Stack
+## 🎯 Core Capabilities (What DocLens Actually Does)
 
-### Frontend
-- **Framework**: React 18 with Vite
-- **Styling**: TailwindCSS
-- **State Management**: React Context API
-- **HTTP Client**: Fetch API
-- **Charts**: Recharts
-- **Icons**: Lucide React
+1. **Research Collections & Library**: Organize your PDFs into targeted domains.
+2. **Fast & Reliable Ingestion**: Upload PDFs and watch them get automatically extracted, chunked, and embedded into a high-speed FAISS vector index.
+3. **Citation-Backed Research Chat**: Ask questions across your collections. DocLens uses an advanced RAG pipeline to retrieve relevant chunks and generate answers. Every claim is backed by a clickable citation that reveals the exact source paragraph.
+4. **Literature Reviews**: Automatically synthesize multi-paper literature reviews based *only* on retrieved text. Export them to Markdown or PDF.
+5. **Insights & Analytics**: Track your corpus size, processing health, and discovery velocity.
+6. **Workspace Notes**: Keep track of manual synthesis and thoughts alongside your automated chats.
 
-### Backend
-- **Framework**: NestJS (TypeScript)
-- **Database**: PostgreSQL
-- **ORM**: Prisma
-- **Authentication**: JWT (JSON Web Tokens)
-- **Validation**: class-validator
-- **API Documentation**: Swagger/OpenAPI
+*Note: DocLens strictly relies on retrieved paper content and does not invent information. We do not support "Knowledge Graphs", "Neo4j integrations", or "Auto-generated concept pipelines", as we prioritize grounded, verifiable answers over speculative extraction.*
 
-## 📋 Prerequisites
+---
 
-- Node.js >= 18.x
-- PostgreSQL >= 14.x
-- npm or yarn
+## 🏗️ System Architecture
 
-## 🔧 Setup Instructions
+DocLens operates as a monorepo containing a React frontend, a NestJS core API, and a Python-based FastAPI AI service.
 
-### 1. Clone and Install
+### Technology Stack
 
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd ledgerx-fullstack
+**Frontend Layer**
+- **Framework:** React 18 powered by Vite
+- **Styling:** Custom Vanilla CSS (Dark-theme, glassmorphism aesthetics)
+- **State Management:** React Context API
+- **Icons:** Lucide React
 
-# Install frontend dependencies
-cd frontend
-npm install
+**Core Backend Layer**
+- **Framework:** NestJS (TypeScript)
+- **Database:** PostgreSQL
+- **ORM:** Prisma
+- **Authentication:** JWT (JSON Web Tokens)
 
-# Install backend dependencies
-cd ../backend
-npm install
-```
+**AI & Semantic Service Layer**
+- **Framework:** FastAPI (Python)
+- **Vector Database:** FAISS (Facebook AI Similarity Search)
+- **Embeddings:** HuggingFace `sentence-transformers/all-MiniLM-L6-v2`
+- **LLM Provider:** OpenRouter (DeepSeek V3 default, Gemini 2.5 Flash fallback)
+- **Document Parsing:** PyMuPDF (`fitz`)
 
-### 2. Database Setup
-
-```bash
-# Start PostgreSQL (if not already running)
-# Create a new database
-createdb ledgerx
-
-# Or using psql
-psql -U postgres
-CREATE DATABASE ledgerx;
-\q
-```
-
-### 3. Backend Configuration
-
-```bash
-cd backend
-
-# Copy environment example
-cp .env.example .env
-
-# Edit .env with your database credentials
-# Example:
-# DATABASE_URL="postgresql://username:password@localhost:5432/ledgerx"
-# JWT_SECRET="your-secret-key-here"
-# PORT=3001
-```
-
-### 4. Run Database Migrations
-
-```bash
-cd backend
-
-# Generate Prisma Client
-npx prisma generate
-
-# Run migrations
-npx prisma migrate dev
-
-# Optional: Seed the database with sample data
-npx prisma db seed
-```
-
-### 5. Frontend Configuration
-
-```bash
-cd frontend
-
-# Create .env file
-echo "VITE_API_URL=http://localhost:3001/api/v1" > .env
-```
-
-### 6. Start the Application
-
-**Terminal 1 - Backend:**
-```bash
-cd backend
-npm run start:dev
-```
-Backend will run on `http://localhost:3001`
-
-**Terminal 2 - Frontend:**
-```bash
-cd frontend
-npm run dev
-```
-Frontend will run on `http://localhost:5173`
-
-## 📚 API Documentation
-
-Once the backend is running, visit:
-- Swagger UI: `http://localhost:3001/api`
-- API Base URL: `http://localhost:3001/api/v1`
-
-## 🎯 Features
-
-### User Management
-- ✅ User registration and login
-- ✅ JWT-based authentication
-- ✅ Role-based access control (Admin/Viewer)
-
-### Transaction Management
-- ✅ Create, read, update, delete transactions
-- ✅ Income and expense tracking
-- ✅ Category-based organization
-- ✅ Advanced filtering and search
-- ✅ Pagination support
-
-### Analytics & Insights
-- ✅ Financial summary (income, expenses, balance)
-- ✅ Monthly trends
-- ✅ Category-wise breakdown
-- ✅ Month-over-month comparison
-- ✅ Interactive charts and visualizations
-
-### Dashboard
-- ✅ Real-time financial overview
-- ✅ Recent transactions
-- ✅ Quick stats and metrics
-- ✅ Visual analytics
-
-## 🛠️ Development
-
-### Backend Commands
-
-```bash
-cd backend
-
-# Development mode with hot reload
-npm run start:dev
-
-# Production build
-npm run build
-npm run start:prod
-
-# Run tests
-npm run test
-npm run test:e2e
-
-# Prisma commands
-npx prisma studio              # Open Prisma Studio
-npx prisma migrate dev         # Create and apply migration
-npx prisma generate            # Generate Prisma Client
-npx prisma db push             # Push schema without migration
-```
-
-### Frontend Commands
-
-```bash
-cd frontend
-
-# Development server
-npm run dev
-
-# Production build
-npm run build
-
-# Preview production build
-npm run preview
-
-# Lint code
-npm run lint
-```
+---
 
 ## 📁 Project Structure
 
-### Frontend Structure
-```
-frontend/
-├── public/              # Static assets
-├── src/
-│   ├── components/      # Reusable UI components
-│   ├── pages/           # Page components
-│   ├── contexts/        # React contexts (Auth, etc.)
-│   ├── hooks/           # Custom hooks
-│   ├── services/        # API service layer
-│   ├── utils/           # Utility functions
-│   ├── assets/          # Images, fonts, etc.
-│   ├── App.jsx          # Main app component
-│   └── main.jsx         # Entry point
-├── index.html
-├── package.json
-└── vite.config.js
-```
-
-### Backend Structure
-```
-backend/
-├── src/
-│   ├── auth/            # Authentication module
-│   ├── transactions/    # Transactions module
-│   ├── users/           # Users module
-│   ├── common/          # Shared utilities
-│   ├── config/          # Configuration
-│   ├── app.module.ts    # Root module
-│   └── main.ts          # Entry point
-├── prisma/
-│   ├── schema.prisma    # Database schema
-│   └── migrations/      # Migration files
-├── package.json
-└── tsconfig.json
+```text
+doclens-fullstack/
+├── frontend/                   # React SPA
+│   ├── public/                 # Static assets
+│   ├── src/
+│   │   ├── components/         # Reusable UI components
+│   │   ├── pages/              # Route-level components
+│   │   ├── contexts/           # Application state providers
+│   │   ├── styles/             # Application design system
+│   │   └── services/           # API integration layer
+│
+├── backend/                    # NestJS Core API
+│   ├── src/
+│   │   ├── auth/               # Authentication & Authorization
+│   │   ├── users/              # User management
+│   │   ├── collections/        # Research collections
+│   │   ├── documents/          # Document state machine
+│   │   └── query/              # Proxy to AI Service
+│   ├── prisma/                 # Database schema and migrations
+│
+├── ai-service/                 # FastAPI Python Semantic Engine
+│   ├── main.py                 # REST Endpoints
+│   ├── ingest.py               # PDF Parsing, Chunking & Embedding
+│   ├── query.py                # FAISS Retrieval & LLM Generation
+│   └── vector_store/           # Local FAISS index & metadata DB
 ```
 
-## 🔐 Environment Variables
+---
 
-### Backend (.env)
-```env
-DATABASE_URL="postgresql://user:password@localhost:5432/ledgerx"
-JWT_SECRET="your-secret-key"
-JWT_EXPIRATION="7d"
-PORT=3001
-NODE_ENV="development"
+## 🚀 Setup & Installation
+
+### Prerequisites
+- Node.js (v18 or higher)
+- Python (3.9 or higher)
+- PostgreSQL (v14 or higher)
+
+### 1. Database Configuration
+Ensure PostgreSQL is running, then create the database:
+```bash
+createdb doclens
 ```
 
-### Frontend (.env)
-```env
-VITE_API_URL="http://localhost:3001/api/v1"
-```
-
-## 🧪 Testing
-
-### Backend Tests
+Configure the backend environment:
 ```bash
 cd backend
-npm run test           # Unit tests
-npm run test:e2e       # End-to-end tests
-npm run test:cov       # Test coverage
+cp .env.example .env
+```
+Update `backend/.env` with your credentials:
+```env
+DATABASE_URL="postgresql://username:password@localhost:5432/doclens"
+JWT_SECRET="your-secure-jwt-secret"
+PORT=3001
+AI_SERVICE_URL="http://localhost:8000"
 ```
 
-### Frontend Tests
+### 2. Run Database Migrations
+```bash
+cd backend
+npx prisma generate
+npx prisma migrate dev
+```
+
+### 3. AI Service Configuration
+Configure the Python environment and provide your OpenRouter API key.
+```bash
+cd ai-service
+python -m venv venv
+source venv/bin/activate  # (or `venv\Scripts\activate` on Windows)
+pip install -r requirements.txt
+```
+
+Create `ai-service/.env`:
+```env
+OPENROUTER_API_KEY="your-openrouter-key"
+```
+
+### 4. Start Development Servers
+You will need to run three separate processes:
+
+**Terminal 1 (Backend API):**
+```bash
+cd backend
+npm install
+npm run start:dev
+```
+
+**Terminal 2 (AI Semantic Service):**
+```bash
+cd ai-service
+source venv/bin/activate
+uvicorn main:app --reload --port 8000
+```
+
+**Terminal 3 (Frontend UI):**
 ```bash
 cd frontend
-npm run test
+npm install
+npm run dev
 ```
 
-## 📦 Deployment
+The application will be available at `http://localhost:5173`.
 
-### Backend Deployment
-1. Build the application: `npm run build`
-2. Set environment variables on your server
-3. Run migrations: `npx prisma migrate deploy`
-4. Start the server: `npm run start:prod`
+---
 
-### Frontend Deployment
-1. Build the application: `npm run build`
-2. Deploy the `dist` folder to your hosting service (Vercel, Netlify, etc.)
-3. Set the `VITE_API_URL` environment variable to your production backend URL
+## 🤝 Contributing & Workflows
 
-## 🤝 Contributing
+1. **Grounded Over Generative:** Any new AI features must maintain a strict line-of-sight to the source document. If a feature relies on LLMs "guessing" relationships or extracting structured data unreliably, it does not belong in DocLens.
+2. **Architecture:** The NestJS backend acts as the source of truth for Users, Authentication, and access control. The FastAPI service acts purely as a stateless/semantic worker for ingestion and retrieval. Do not cross these boundaries.
+3. **UI/UX:** Maintain the premium, dark-themed aesthetic. Avoid injecting massive frameworks like Tailwind unless strictly necessary for a specific component.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+---
 
 ## 📝 License
 
-This project is licensed under the MIT License.
-
-## 👤 Author
-
-Aishwary Vansh
-- GitHub: [@aishwary-vansh](https://github.com/aishwary-vansh)
-
-## 🙏 Acknowledgments
-
-- NestJS for the excellent backend framework
-- React team for the amazing frontend library
-- Prisma for the excellent ORM
-- TailwindCSS for beautiful styling utilities
+© Aishwary Vansh 2026. This project is licensed under the MIT License.

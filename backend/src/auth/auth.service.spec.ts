@@ -3,17 +3,42 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 describe('AuthService', () => {
   let authService: AuthService;
   let usersService: UsersService;
   let jwtService: JwtService;
+  let users: any[];
 
   beforeEach(async () => {
+    users = [];
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         UsersService,
+        {
+          provide: PrismaService,
+          useValue: {
+            user: {
+              findUnique: jest.fn(({ where }) => {
+                if (where.email) return users.find((u) => u.email === where.email) ?? null;
+                if (where.id) return users.find((u) => u.id === where.id) ?? null;
+                return null;
+              }),
+              create: jest.fn(({ data }) => {
+                const user = {
+                  id: String(users.length + 1),
+                  ...data,
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
+                };
+                users.push(user);
+                return user;
+              }),
+            },
+          },
+        },
         {
           provide: JwtService,
           useValue: {

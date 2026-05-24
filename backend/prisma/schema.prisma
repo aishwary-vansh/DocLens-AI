@@ -1,35 +1,416 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
+// backend/prisma/schema.prisma
+// DocLens Knowledge Graph-Driven Research Intelligence Platform
 
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../generated/prisma"
 }
 
 datasource db {
-  provider = "postgresql" 
+  provider = "postgresql"
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  name      String?
-  createdAt DateTime @default(now())
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("viewer") // "admin" | "viewer"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  transactions Transaction[]
+  workspaces   Workspace[]
+  chatSessions ChatSession[]
+  comparisons  PaperComparison[]
+  reviews      LiteratureReview[]
+  notes        ResearchNote[]
+  progress     ReadingProgress[]
 }
 
-model Transaction {
-  id          Int      @id @default(autoincrement())
-  amount      Float
-  type        String   // "income" or "expense"
-  category    String
+model Workspace {
+  id          String   @id @default(uuid())
+  name        String
   description String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  userId Int
-  user   User @relation(fields: [userId], references: [id])
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collections Collection[]
+}
+
+// A thematic grouping of documents within a workspace.
+model Collection {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspaceId String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documents   Document[]
+  comparisons PaperComparison[]
+  reviews     LiteratureReview[]
+  notes       ResearchNote[]
+}
+
+model Document {
+  id                 String         @id @default(uuid())
+  title              String
+  filename           String
+  fileUrl            String
+  mimeType           String         @default("application/pdf")
+  fileSize           Int?
+  pageCount          Int?
+  status             DocumentStatus @default(PENDING)
+  processingProgress Int            @default(0)
+  errorMessage       String?
+  metadata           Json?
+  aiProcessedAt      DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  chunks         DocumentChunk[]
+  embeddings     EmbeddingMetadata[]
+  entities       DocumentEntity[]
+  relationships  Relationship[]
+  processingJobs ProcessingJob[]
+  notes          ResearchNote[]
+  progress       ReadingProgress[]
+}
+
+enum DocumentStatus {
+  PENDING
+  UPLOADED
+  EXTRACTING
+  CHUNKING
+  EMBEDDING
+  INDEXING
+  READY
+  COMPLETED
+  FAILED
+}
+
+// Created by the AI service after processing; stored for citation tracing.
+model DocumentChunk {
+  id          String   @id @default(uuid())
+  content     String
+  pageNumber  Int?
+  chunkIndex  Int
+  vectorId    String?
+  tokenCount  Int?
+  contentHash String?
+  createdAt   DateTime @default(now())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  citations                Citation[]
+  embedding                EmbeddingMetadata?
+  evidenceForRelationships Relationship[]     @relation("RelationshipEvidence")
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId, pageNumber])
+}
+
+// Stores vector metadata without duplicating vector payloads in Postgres.
+model EmbeddingMetadata {
+  id               String   @id @default(uuid())
+  provider         String   @default("sentence-transformers")
+  modelName        String
+  dimensions       Int
+  similarityMetric String   @default("cosine")
+  vectorStore      String   @default("faiss")
+  vectorId         String   @unique
+  collectionId     String
+  createdAt        DateTime @default(now())
+
+  chunkId String        @unique
+  chunk   DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([collectionId, modelName])
+  @@index([documentId])
+}
+
+model ChatSession {
+  id        String   @id @default(uuid())
+  title     String?
+  scopeType String   @default("collection") // "collection" | "document" | "workspace"
+  scopeId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId  String
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  queries Query[]
+}
+
+model Query {
+  id            String   @id @default(uuid())
+  question      String
+  answer        String?  @db.Text
+  modelUsed     String?
+  retrievalMode String   @default("vector")
+  processingMs  Int?
+  rawRequest    Json?
+  createdAt     DateTime @default(now())
+
+  chatSessionId String
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+  citations     Citation[]
+}
+
+// Links an AI answer back to the exact chunk it was derived from.
+model Citation {
+  id            String  @id @default(uuid())
+  relevance     Float?
+  pageNumber    Int?
+  documentTitle String?
+  sourceText    String? @db.Text
+
+  queryId String
+  query   Query  @relation(fields: [queryId], references: [id], onDelete: Cascade)
+
+  chunkId String
+  chunk   DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@index([queryId])
+  @@index([chunkId])
+}
+
+model PaperComparison {
+  id          String   @id @default(uuid())
+  title       String
+  question    String?
+  documentIds String[] @default([])
+  result      Json
+  markdown    String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([collectionId])
+}
+
+model LiteratureReview {
+  id          String   @id @default(uuid())
+  title       String
+  topic       String?
+  documentIds String[] @default([])
+  sections    Json
+  markdown    String   @db.Text
+  status      String   @default("COMPLETED")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([collectionId])
+}
+
+model ResearchNote {
+  id        String   @id @default(uuid())
+  title     String
+  content   String   @db.Text
+  scopeType String   @default("collection")
+  scopeId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  collectionId String?
+  collection   Collection? @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([userId, updatedAt])
+  @@index([scopeType, scopeId])
+  @@index([collectionId])
+  @@index([documentId])
+}
+
+model ReadingProgress {
+  id           String   @id @default(uuid())
+  status       String   @default("UNREAD")
+  progress     Int      @default(0)
+  lastReadPage Int?
+  notes        String?  @db.Text
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, documentId])
+  @@index([userId, updatedAt])
+  @@index([documentId])
+}
+
+enum EntityType {
+  AUTHOR
+  CONCEPT
+  DATASET
+  METHOD
+  METRIC
+  MODEL
+  PAPER
+}
+
+model Entity {
+  id              String     @id @default(uuid())
+  name            String
+  normalizedName  String
+  type            EntityType
+  collectionId    String
+  externalGraphId String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  documents             DocumentEntity[]
+  outgoingRelationships Relationship[]   @relation("RelationshipSource")
+  incomingRelationships Relationship[]   @relation("RelationshipTarget")
+
+  @@unique([collectionId, normalizedName, type])
+  @@index([collectionId, type])
+  @@index([normalizedName])
+}
+
+model DocumentEntity {
+  id           String   @id @default(uuid())
+  mentionCount Int      @default(1)
+  pages        Int[]    @default([])
+  confidence   Float    @default(1.0)
+  createdAt    DateTime @default(now())
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  entityId String
+  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, entityId])
+  @@index([entityId])
+}
+
+enum RelationshipType {
+  USES
+  EVALUATED_ON
+  REPORTS
+  COMPARED_WITH
+  BASED_ON
+  RELATED_TO
+  AUTHORED_BY
+  HAS_CONCEPT
+  HAS_METHOD
+  HAS_DATASET
+  HAS_METRIC
+  HAS_MODEL
+}
+
+model Relationship {
+  id           String           @id @default(uuid())
+  type         RelationshipType
+  collectionId String
+  confidence   Float            @default(1.0)
+  metadata     Json?
+  createdAt    DateTime         @default(now())
+
+  sourceEntityId String
+  sourceEntity   Entity @relation("RelationshipSource", fields: [sourceEntityId], references: [id], onDelete: Cascade)
+
+  targetEntityId String
+  targetEntity   Entity @relation("RelationshipTarget", fields: [targetEntityId], references: [id], onDelete: Cascade)
+
+  documentId String?
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  evidenceChunkId String?
+  evidenceChunk   DocumentChunk? @relation("RelationshipEvidence", fields: [evidenceChunkId], references: [id], onDelete: SetNull)
+
+  @@index([collectionId, type])
+  @@index([sourceEntityId])
+  @@index([targetEntityId])
+  @@index([documentId])
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  ACTIVE
+  RETRYING
+  COMPLETED
+  FAILED
+  DEAD_LETTER
+}
+
+enum ProcessingStage {
+  UPLOADED
+  EXTRACTING
+  CHUNKING
+  EMBEDDING
+  INDEXING
+  READY
+  FAILED
+}
+
+model ProcessingJob {
+  id              String              @id @default(uuid())
+  queueName       String              @default("document-processing")
+  externalJobId   String?
+  status          ProcessingJobStatus @default(QUEUED)
+  stage           ProcessingStage     @default(UPLOADED)
+  progress        Int                 @default(0)
+  attempts        Int                 @default(0)
+  maxAttempts     Int                 @default(3)
+  payload         Json?
+  errorMessage    String?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  failedAt        DateTime?
+  lastHeartbeatAt DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([status, stage])
+  @@index([documentId])
+  @@index([externalJobId])
+}
+
+model AnalyticsSnapshot {
+  id          String   @id @default(uuid())
+  scopeType   String
+  scopeId     String
+  metricName  String
+  metricValue Float
+  dimensions  Json?
+  capturedAt  DateTime @default(now())
+
+  @@index([scopeType, scopeId, metricName])
+  @@index([capturedAt])
 }

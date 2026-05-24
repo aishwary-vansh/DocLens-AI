@@ -4,6 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import { join } from 'path';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -11,7 +14,7 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 import { UsersService } from './users/users.service';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['log', 'warn', 'error', 'debug'],
   });
 
@@ -19,6 +22,16 @@ async function bootstrap() {
   const port = config.get<number>('port') ?? 3001;
   const corsOrigins = config.get<string[]>('cors.origins') ?? ['http://localhost:5173'];
   const isDev = config.get<string>('nodeEnv') !== 'production';
+
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
+
+  // ── Static uploads directory ─────────────────────────────────────────────
+  // Uploaded PDFs are accessible at: GET /uploads/<userId>/<filename>
+  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
   // ── Global prefix ────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');
@@ -32,12 +45,11 @@ async function bootstrap() {
   });
 
   // ── Global validation pipe ───────────────────────────────────────────────
-  // Strips unknown fields, transforms types, returns clear 400 messages
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,           // strip extra fields not in DTO
-      forbidNonWhitelisted: true,// 400 if extra fields sent
-      transform: true,           // auto-cast query params to their DTO types
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
       transformOptions: { enableImplicitConversion: true },
     }),
   );
@@ -49,15 +61,17 @@ async function bootstrap() {
   // ── Swagger (dev only) ───────────────────────────────────────────────────
   if (isDev) {
     const swaggerConfig = new DocumentBuilder()
-      .setTitle('LedgerX API')
+      .setTitle('DocLens API')
       .setDescription(
-        'REST API for the LedgerX Finance Dashboard.\n\n' +
+        'REST API for DocLens — Knowledge Graph-Driven Research Intelligence Platform.\n\n' +
         '**Auth flow:** `POST /auth/login` → copy `accessToken` → click 🔒 Authorize → paste `Bearer <token>`',
       )
       .setVersion('1.0')
       .addBearerAuth()
       .addTag('Auth', 'Register, login, profile')
-      .addTag('Transactions', 'CRUD + analytics endpoints')
+      .addTag('Workspaces', 'Workspace CRUD')
+      .addTag('Collections', 'Collection CRUD within workspaces')
+      .addTag('Documents', 'PDF upload and document management')
       .build();
 
     const document = SwaggerModule.createDocument(app, swaggerConfig);
@@ -68,17 +82,17 @@ async function bootstrap() {
     Logger.log(`📖 Swagger docs → http://localhost:${port}/api/docs`, 'Bootstrap');
   }
 
-  // ── Seed admin user ──────────────────────────────────────────────────────
+  // ── Seed users ───────────────────────────────────────────────────────────
   const usersService = app.get(UsersService);
-  const adminEmail    = config.get<string>('ADMIN_EMAIL')    ?? 'admin@ledgerx.com';
+  const adminEmail    = config.get<string>('ADMIN_EMAIL')    ?? 'admin@doclens.ai';
   const adminPassword = config.get<string>('ADMIN_PASSWORD') ?? 'Admin@1234';
   await usersService.seed(adminEmail, adminPassword, 'Admin', 'admin');
-  await usersService.seed('viewer@ledgerx.com', 'Viewer@1234', 'Demo Viewer', 'viewer');
+  await usersService.seed('demo@doclens.ai', 'Demo@1234', 'Demo User', 'viewer');
   Logger.log(`🌱 Seed users ready  →  ${adminEmail} / ${adminPassword}`, 'Bootstrap');
 
   // ── Listen ───────────────────────────────────────────────────────────────
   await app.listen(port);
-  Logger.log(`🚀 LedgerX API      →  http://localhost:${port}/api/v1`, 'Bootstrap');
+  Logger.log(`🚀 DocLens API      →  http://localhost:${port}/api/v1`, 'Bootstrap');
 }
 
 bootstrap();

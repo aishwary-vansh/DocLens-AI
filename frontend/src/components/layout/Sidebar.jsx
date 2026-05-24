@@ -1,53 +1,73 @@
-import { useTransactions } from "../../contexts/TransactionContext";
+import { useApp, PAGES } from "../../contexts/AppContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { useSocket } from "../../contexts/SocketContext";
+import Icon from "../research/Icons";
 
-const navItems = [
-  { id: "dashboard",    label: "Dashboard",    icon: "⚡" },
-  { id: "transactions", label: "Transactions", icon: "💳" },
-  { id: "insights",     label: "Insights",     icon: "📊" },
+const NAV_ITEMS = [
+  { id: PAGES.DASHBOARD, label: "Dashboard", icon: "dashboard" },
+  { id: PAGES.COLLECTIONS, label: "Collections", icon: "collections" },
+  { id: PAGES.PAPERS, label: "Papers", icon: "papers" },
+  { id: PAGES.CHAT, label: "Research Chat", icon: "chat" },
+  { id: PAGES.COMPARE_PAPERS, label: "Compare Papers", icon: "spark" },
+  { id: PAGES.LITERATURE_REVIEWS, label: "Literature Reviews", icon: "book" },
+  { id: PAGES.NOTES, label: "Research Notes", icon: "papers" },
+  { id: PAGES.READING_LIST, label: "Reading List", icon: "dashboard" },
+  { id: PAGES.ANALYTICS, label: "Analytics", icon: "analytics" },
+  { id: PAGES.SETTINGS, label: "Settings", icon: "settings" },
 ];
 
 const Sidebar = () => {
-  const { activePage, setActivePage } = useTransactions();
+  const { activePage, navigateTo } = useApp();
+  const { logout, user } = useAuth();
+  const socket = useSocket();
+  const initials = user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "D";
+  const activeNavPage = activePage === PAGES.COLLECTION ? PAGES.COLLECTIONS : activePage;
 
   return (
-    <aside className="w-[260px] h-screen bg-card2 border-r border-border-custom flex flex-col p-[2rem_1.4rem] shrink-0 relative overflow-hidden">
-      <div className="sidebar-orb w-[200px] h-[200px] bottom-10 -left-[70px] bg-[radial-gradient(circle,rgba(91,79,255,0.3),transparent_70%)]" />
-      <div className="sidebar-orb w-[130px] h-[130px] top-[100px] -left-5 bg-[radial-gradient(circle,rgba(0,245,200,0.12),transparent_70%)]" />
-      
-      <div className="sidebar-logo font-syne text-[1.75rem] font-[800] tracking-[-0.04em] mb-1 text-paper relative z-10 leading-none">
-        Ledger<span className="text-accent">X</span>
+    <aside className="research-sidebar" aria-label="Research workspace navigation">
+      <div className="brand-lockup">
+        <div className="brand-mark"><Icon name="spark" size={20} /></div>
+        <div>
+          <strong>DocLens</strong>
+          <span>Research Intelligence</span>
+        </div>
       </div>
-      <div className="sidebar-sub font-mono-dm text-[0.65rem] tracking-[0.12em] text-white/20 uppercase mb-[2.5rem] relative z-10 font-medium">
-        ◈ Finance Dashboard
-      </div>
-      
-      <div className="nav-label font-mono-dm text-[0.6rem] tracking-[0.12em] uppercase text-white/18 px-2 mb-3 relative z-10 font-medium">
-        Navigation
-      </div>
-      
-      <nav className="space-y-[3px] relative z-10">
-        {navItems.map((item) => {
-          const isActive = activePage === item.id;
-          return (
-            <button 
-              key={item.id} 
-              onClick={() => setActivePage(item.id)}
-              className={`flex items-center gap-[0.8rem] w-full p-[0.75rem_1rem] rounded-xl text-[0.95rem] font-[600] transition-all duration-200 cursor-none select-none ${
-                isActive 
-                  ? 'bg-accent/7 border border-accent/18 text-accent' 
-                  : 'text-white/38 border border-transparent hover:text-white/70 hover:bg-white/4'
-              }`}
-            >
-              <span className="text-base">{item.icon}</span>
-              {item.label}
-              {isActive && <span className="w-[5px] h-[5px] rounded-full bg-accent ml-auto" />}
-            </button>
-          );
-        })}
+
+      <div className="sidebar-section-label">Workspace</div>
+      <nav className="sidebar-nav">
+        {NAV_ITEMS.map((item) => (
+          <button
+            className={`sidebar-nav-button ${activeNavPage === item.id ? "active" : ""}`}
+            key={item.id}
+            onClick={() => navigateTo(item.id)}
+            type="button"
+          >
+            <Icon name={item.icon} size={18} />
+            <span>{item.label}</span>
+          </button>
+        ))}
       </nav>
-      
-      <div className="mt-auto font-mono-dm text-[0.58rem] text-white/14 pt-[1.1rem] tracking-[0.05em] border-t border-border-custom relative z-10 uppercase">
-        © 2026 LedgerX · Developed by Aishwary Vansh<br />v2.2 · Tailwind Refactor Complete
+
+      <section className="sidebar-signal-panel" aria-label="Research platform status">
+        <strong>Corpus Intelligence</strong>
+        <p>Semantic search, citation grounding, and text summarization.</p>
+        <div className="signal-row"><span>API</span><i /></div>
+        <div className="signal-row"><span>Realtime indexing</span><i style={{ opacity: socket?.connected ? 1 : 0.35 }} /></div>
+        <div className="signal-row"><span>Analysis pipeline</span><i style={{ background: "var(--rp-amber)", opacity: 0.8 }} /></div>
+      </section>
+
+      <div className="sidebar-user">
+        <div className="sidebar-avatar">{initials}</div>
+        <div>
+          <strong>{user?.name || "Researcher"}</strong>
+          <span>{user?.email || "doclens user"}</span>
+        </div>
+        <button className="sidebar-logout" onClick={logout} title="Sign out" type="button">
+          <Icon name="arrowRight" size={15} />
+        </button>
+      </div>
+      <div style={{ textAlign: 'center', fontSize: '0.65rem', color: 'var(--rp-text-muted)', opacity: 0.5, marginTop: 10 }}>
+        © Aishwary Vansh 2026
       </div>
     </aside>
   );

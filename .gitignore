@@ -114,3 +114,20 @@ yarn.lock.backup
 
 # Misc
 .turbo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# App Specific Data
+backend/uploads/
+ai-service/data/

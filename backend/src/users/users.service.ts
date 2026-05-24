@@ -1,64 +1,56 @@
-import { randomUUID as uuid } from 'crypto';
-// src/users/users.service.ts
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { User, UserRole } from './user.entity';
+import { User } from '../../generated/prisma';
+import { PrismaService } from '../prisma/prisma.service';
 
-// In-memory store — swap to TypeORM repository for production DB
-let userStore: User[] = [];
-let idCounter = 1;
+export type UserRole = 'admin' | 'viewer';
+
+export type SafeUser = Omit<User, 'passwordHash'>;
 
 @Injectable()
 export class UsersService {
-  // ─── Seed ────────────────────────────────────────────────────────────
-  async seed(email: string, password: string, name: string, role: UserRole = 'admin') {
-    const exists = userStore.find((u) => u.email === email);
-    if (exists) return exists;
+  constructor(private readonly prisma: PrismaService) {}
+
+  async seed(email: string, password: string, name: string, role: UserRole = 'viewer') {
+    const existing = await this.findByEmail(email);
+    if (existing) return existing;
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user: User = {
-      id: String(idCounter++),
-      email,
-      name,
-      passwordHash,
-      role,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    userStore.push(user);
+    return this.prisma.user.create({
+      data: { email, name, passwordHash, role },
+    });
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { email } });
+  }
+
+  async findById(id: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  async findByIdOrThrow(id: string): Promise<User> {
+    const user = await this.findById(id);
+    if (!user) throw new NotFoundException(`User ${id} not found`);
     return user;
   }
 
-  // ─── Find ─────────────────────────────────────────────────────────────
-  async findByEmail(email: string): Promise<User | undefined> {
-    return userStore.find((u) => u.email === email);
-  }
-
-  async findById(id: string): Promise<User | undefined> {
-    return userStore.find((u) => u.id === id);
-  }
-
-  // ─── Create ───────────────────────────────────────────────────────────
   async create(email: string, password: string, name: string): Promise<User> {
     const existing = await this.findByEmail(email);
     if (existing) throw new ConflictException('Email already registered');
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user: User = {
-      id: String(idCounter++),
-      email,
-      name,
-      passwordHash,
-      role: 'viewer',
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    userStore.push(user);
-    return user;
+    return this.prisma.user.create({
+      data: {
+        email,
+        name,
+        passwordHash,
+        role: 'viewer',
+      },
+    });
   }
 
-  // ─── Safe profile (no hash) ───────────────────────────────────────────
-  toProfile(user: User) {
+  toProfile(user: User): SafeUser {
     const { passwordHash, ...profile } = user;
     return profile;
   }

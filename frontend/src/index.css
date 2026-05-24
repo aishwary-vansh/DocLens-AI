@@ -1,79 +1,174 @@
-@import url("https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap");
-@import url("https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,500,700,400,300,900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap");
 @import "tailwindcss";
+
 @theme {
-  --color-ink: #07070f;
-  --color-paper: #f0ede6;
-  --color-accent: #00f5c8;
-  --color-accent2: #9d6cff;
-  --color-accent3: #ff5c8a;
-  --color-extraviolet: #5b4fff;
-  --color-extracoral: #ff5c3a;
-  --color-extrasky: #3af5d8;
-  --color-card: #0d0e1e;
-  --color-card2: #0b0c1a;
-  --color-border-custom: rgba(255, 255, 255, 0.07);
-  
-  --font-syne: "Syne", sans-serif;
-  --font-mono-dm: "DM Mono", monospace;
-  --font-cabinet: "Cabinet Grotesk", sans-serif;
+  /* ── Light palette ──────────────────────────────────────── */
+  --color-bg:           #F7F8FC;
+  --color-surface:      #FFFFFF;
+  --color-surface2:     #F0F2F8;
+  --color-border:       #E4E7EF;
+  --color-border-light: #EDF0F6;
+
+  /* ── Text ─────────────────────────────────────────────────── */
+  --color-text-primary:   #0D0E1A;
+  --color-text-secondary: #5C6080;
+  --color-text-muted:     #9BA3BF;
+
+  /* ── Brand accents ───────────────────────────────────────── */
+  --color-indigo:       #5B6CF8;
+  --color-indigo-light: #EEF0FE;
+  --color-indigo-dark:  #4550E6;
+  --color-violet:       #8B5CF6;
+  --color-violet-light: #F3EFFE;
+  --color-emerald:      #10B981;
+  --color-emerald-light:#ECFDF5;
+  --color-amber:        #F59E0B;
+  --color-amber-light:  #FFFBEB;
+  --color-red:          #EF4444;
+  --color-red-light:    #FEF2F2;
+  --color-sky:          #0EA5E9;
+  --color-sky-light:    #F0F9FF;
+
+
+  /* ── Typography ──────────────────────────────────────────── */
+  --font-syne:     "Syne", sans-serif;
+  --font-mono-dm:  "DM Mono", monospace;
+  --font-cabinet:  "Inter", sans-serif;
+
+  /* ── Shadows ─────────────────────────────────────────────── */
+  --shadow-xs:  0 1px 3px rgba(13,14,26,0.06), 0 1px 2px rgba(13,14,26,0.04);
+  --shadow-sm:  0 2px 8px rgba(13,14,26,0.08), 0 1px 3px rgba(13,14,26,0.06);
+  --shadow-md:  0 4px 20px rgba(13,14,26,0.10), 0 2px 6px rgba(13,14,26,0.06);
+  --shadow-lg:  0 8px 40px rgba(13,14,26,0.12), 0 4px 12px rgba(13,14,26,0.08);
+  --shadow-indigo: 0 4px 20px rgba(91,108,248,0.25);
 }
 
+/* ── Reset ──────────────────────────────────────────────────── */
 @layer base {
-
-  * {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
   html, body, #root {
     height: 100%;
     width: 100%;
     overflow: hidden;
-    background: var(--color-ink);
-    color: var(--color-paper);
-    font-family: var(--font-cabinet);
-    cursor: none;
+    background: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: "Inter", sans-serif;
+    cursor: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-/* Custom components that are easier as CSS or used Globally */
+/* ── Design system components ────────────────────────────────── */
 @layer components {
+
+  /* Custom cursor */
   .cursor {
-    @apply fixed w-[10px] h-[10px] bg-accent rounded-full pointer-events-none z-[9999];
+    @apply fixed w-[9px] h-[9px] rounded-full pointer-events-none z-[9999];
+    background: var(--color-indigo);
     transform: translate(-50%, -50%);
-    transition: width 0.18s, height 0.18s;
-    mix-blend-mode: screen;
+    transition: width 0.15s, height 0.15s, opacity 0.15s;
+    mix-blend-mode: normal;
   }
-  
   .cursor-ring {
-    @apply fixed w-[34px] h-[34px] border-[1.5px] border-accent/40 rounded-full pointer-events-none z-[9998];
+    @apply fixed w-[30px] h-[30px] border-[1.5px] rounded-full pointer-events-none z-[9998];
+    border-color: rgba(91,108,248,0.35);
     transform: translate(-50%, -50%);
   }
 
+  /* Card */
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    box-shadow: var(--shadow-xs);
+  }
+  .card-hover {
+    transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+  }
+  .card-hover:hover {
+    box-shadow: var(--shadow-md);
+    border-color: rgba(91,108,248,0.3);
+    transform: translateY(-1px);
+  }
+
+  /* Pill badge */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-family: "DM Mono", monospace;
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* Button primary */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 18px;
+    background: var(--color-indigo);
+    color: #fff;
+    border-radius: 10px;
+    font-family: "Inter", sans-serif;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
+    border: none;
+    outline: none;
+  }
+  .btn-primary:hover {
+    background: var(--color-indigo-dark);
+    box-shadow: var(--shadow-indigo);
+    transform: translateY(-1px);
+  }
+
+  /* Sidebar orb — keep class name, adapt colors */
   .sidebar-orb {
-    @apply absolute rounded-full blur-[55px] pointer-events-none;
-  }
-
-  .glass {
-    @apply bg-card/92 backdrop-blur-[20px] border-b border-border-custom;
+    @apply absolute rounded-full blur-[50px] pointer-events-none;
   }
 }
 
-/* Custom scrollbar */
-.scroll-area::-webkit-scrollbar { width: 4px; }
+/* ── Scrollbar ──────────────────────────────────────────────── */
+.scroll-area::-webkit-scrollbar { width: 5px; }
 .scroll-area::-webkit-scrollbar-track { background: transparent; }
-.scroll-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+.scroll-area::-webkit-scrollbar-thumb { background: rgba(13,14,26,0.08); border-radius: 5px; }
+.scroll-area::-webkit-scrollbar-thumb:hover { background: rgba(13,14,26,0.14); }
 
-@keyframes fadeIn { 
-  from { opacity: 0; transform: translateY(10px); } 
-  to { opacity: 1; transform: translateY(0); } 
+/* ── Animations ──────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
-.fade-in { animation: fadeIn 0.3s ease; }
+.fade-in { animation: fadeIn 0.28s ease forwards; }
 
-@keyframes slideUp { 
-  from { opacity: 0; transform: translateY(18px); } 
-  to { opacity: 1; transform: translateY(0); } 
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
-.slide-up { animation: slideUp .28s ease; }
+.slide-up { animation: slideUp 0.24s cubic-bezier(0.22,1,0.36,1) forwards; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #edf0f6 25%, #f5f7fc 50%, #edf0f6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}

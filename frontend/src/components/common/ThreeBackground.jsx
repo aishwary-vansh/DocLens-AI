@@ -50,13 +50,6 @@ const ThreeBackground = () => {
     const particles = new THREE.Points(geometry, material);
     scene.add(particles);
 
-    // Connecting lines mesh
-    const lineMaterial = new THREE.LineBasicMaterial({
-      color: 0x6366f1,
-      transparent: true,
-      opacity: 0.08,
-    });
-
     // Floating torus rings
     const rings = [];
     for (let i = 0; i < 3; i++) {

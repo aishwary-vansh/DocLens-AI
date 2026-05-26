@@ -1,6 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { User } from '../../generated/prisma';
+import { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type UserRole = 'admin' | 'viewer';

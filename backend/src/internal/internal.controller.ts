@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DocumentStatus } from '../../generated/prisma';
+import { DocumentStatus } from '@prisma/client';
 import { DocumentsService } from '../documents/documents.service';
 import { EventsGateway } from '../gateway/events.gateway';
 

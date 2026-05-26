@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { Document, DocumentStatus, EntityType, RelationshipType } from '../../generated/prisma';
+import { Document, DocumentStatus, EntityType, RelationshipType } from '@prisma/client';
 import { CollectionsService } from '../collections/collections.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { DocumentProcessingQueueService } from '../processing/document-processing-queue.service';

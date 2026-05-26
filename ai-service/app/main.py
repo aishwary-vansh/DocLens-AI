@@ -1,10 +1,16 @@
 """
 DocLens AI Service — FastAPI application factory.
+
+Memory-optimised for Render free instances (512 MB RAM).
+All heavy resources (SentenceTransformer, FAISS) are loaded lazily
+on first use, not at startup.
 """
 import os
 # Must be set BEFORE any transformers/sentence-transformers import to avoid Keras 3 error
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("USE_TF", "0")
+# Disable tokenizers parallelism to avoid fork-safety issues and reduce memory
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import logging
 from contextlib import asynccontextmanager
@@ -14,8 +20,6 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.core.embedder import get_embedder
-from app.core.index import get_faiss_index
 from app.api import health, ingest, search, query
 
 settings = get_settings()
@@ -25,12 +29,12 @@ logger = logging.getLogger("doclens.ai")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: warm up models and load FAISS index."""
-    logger.info("🔥 Warming up sentence-transformer model: %s", settings.model_name)
-    get_embedder()           # initialises singleton
-    logger.info("📦 Loading FAISS index from: %s", settings.faiss_index_path)
-    get_faiss_index()        # loads or creates index
-    logger.info("✅ DocLens AI Service ready")
+    """
+    Lightweight startup — NO model or index loading.
+    SentenceTransformer and FAISS are loaded lazily on first request.
+    This keeps startup RAM well under 200 MB on Render free instances.
+    """
+    logger.info("✅ DocLens AI Service starting (lazy-load mode — models will load on first request)")
     yield
     logger.info("🛑 Shutting down AI Service")
 
@@ -69,3 +73,4 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+

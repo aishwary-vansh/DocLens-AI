@@ -5,7 +5,6 @@ import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { appConfig } from './config/app.config';
 import { AuthModule } from './auth/auth.module';
-import { UsersModule } from './users/users.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { CollectionsModule } from './collections/collections.module';
 import { DocumentsModule } from './documents/documents.module';
@@ -35,8 +34,7 @@ import { InternalModule } from './internal/internal.module';
 
     // ── Core feature modules ───────────────────────────────────────────
     PrismaModule,
-    UsersModule,
-    AuthModule,
+    AuthModule,        // AuthModule already imports UsersModule internally
     GatewayModule,
     WorkspacesModule,
     CollectionsModule,

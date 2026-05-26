@@ -1,8 +1,8 @@
 // src/auth/auth.module.ts
-import { Module } from '@nestjs/common';
+import { Logger, Module } from '@nestjs/common';
 import { PassportModule } from '@nestjs/passport';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { LocalStrategy } from './strategies/local.strategy';
@@ -13,13 +13,17 @@ import { UsersModule } from '../users/users.module';
   imports: [
     UsersModule,
     PassportModule,
+    // ConfigModule is NOT imported here — it is already isGlobal:true in AppModule.
+    // Adding it here caused a double-init scoping issue that silently prevented
+    // AuthModule from completing DI resolution in production.
     JwtModule.registerAsync({
-      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService): JwtModuleOptions => {
-        const expiresIn = config.get<string>('jwt.expiresIn') ?? '15m';
+        const expiresIn = config.get<string>('jwt.expiresIn') ?? '7d';
+        const secret = config.get<string>('jwt.secret') ?? 'change-me-in-production';
+        Logger.log(`JwtModule configured — expiresIn=${expiresIn}`, 'AuthModule');
         return {
-          secret: config.get<string>('jwt.secret') ?? 'change-me-in-production',
+          secret,
           signOptions: {
             expiresIn: expiresIn as JwtModuleOptions['signOptions']['expiresIn'],
           },
@@ -31,4 +35,8 @@ import { UsersModule } from '../users/users.module';
   providers: [AuthService, LocalStrategy, JwtStrategy],
   exports: [AuthService, JwtModule],
 })
-export class AuthModule {}
+export class AuthModule {
+  constructor() {
+    Logger.log('✅ AuthModule instantiated', 'AuthModule');
+  }
+}

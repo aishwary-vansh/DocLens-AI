@@ -8,6 +8,7 @@ import {
   HttpCode,
   HttpStatus,
   Request,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -29,10 +30,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly usersService: UsersService,
-  ) {}
+  ) {
+    this.logger.log('✅ AuthController instantiated — routes should be registered');
+  }
 
   // ─── POST /auth/register ──────────────────────────────────────────────
   @Post('register')

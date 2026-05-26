@@ -28,7 +28,6 @@ class Settings(BaseSettings):
     max_chunk_tokens: int = 400
     chunk_overlap: int = 50
     top_k_default: int = 5
-    enable_transformer_ner: bool = False
 
     log_level: str = "INFO"
 

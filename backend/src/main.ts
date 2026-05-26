@@ -15,7 +15,7 @@ import { UsersService } from './users/users.service';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    logger: ['log', 'warn', 'error', 'debug'],
+    logger: ['log', 'warn', 'error', 'debug', 'verbose'],
   });
 
   const config = app.get(ConfigService);
@@ -58,29 +58,27 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new LoggingInterceptor(), new TransformInterceptor());
 
-  // ── Swagger (dev only) ───────────────────────────────────────────────────
-  if (isDev) {
-    const swaggerConfig = new DocumentBuilder()
-      .setTitle('DocLens API')
-      .setDescription(
-        'REST API for DocLens — Knowledge Graph-Driven Research Intelligence Platform.\n\n' +
-        '**Auth flow:** `POST /auth/login` → copy `accessToken` → click 🔒 Authorize → paste `Bearer <token>`',
-      )
-      .setVersion('1.0')
-      .addBearerAuth()
-      .addTag('Auth', 'Register, login, profile')
-      .addTag('Workspaces', 'Workspace CRUD')
-      .addTag('Collections', 'Collection CRUD within workspaces')
-      .addTag('Documents', 'PDF upload and document management')
-      .build();
+  // ── Swagger (always enabled so routes are verifiable on Render) ─────────
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('DocLens API')
+    .setDescription(
+      'REST API for DocLens — Knowledge Graph-Driven Research Intelligence Platform.\n\n' +
+      '**Auth flow:** `POST /auth/login` → copy `accessToken` → click 🔒 Authorize → paste `Bearer <token>`',
+    )
+    .setVersion('1.0')
+    .addBearerAuth()
+    .addTag('Auth', 'Register, login, profile')
+    .addTag('Workspaces', 'Workspace CRUD')
+    .addTag('Collections', 'Collection CRUD within workspaces')
+    .addTag('Documents', 'PDF upload and document management')
+    .build();
 
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
-    SwaggerModule.setup('api/docs', app, document, {
-      swaggerOptions: { persistAuthorization: true },
-    });
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, document, {
+    swaggerOptions: { persistAuthorization: true },
+  });
 
-    Logger.log(`📖 Swagger docs → http://localhost:${port}/api/docs`, 'Bootstrap');
-  }
+  Logger.log(`📖 Swagger docs → http://localhost:${port}/api/docs`, 'Bootstrap');
 
   // ── Seed users ───────────────────────────────────────────────────────────
   const usersService = app.get(UsersService);

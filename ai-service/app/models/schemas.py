@@ -1,7 +1,7 @@
 """Pydantic request/response schemas for the DocLens AI service."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -119,45 +119,3 @@ class CompareResponse(BaseModel):
     narrative: str
     citations: list[Citation] = Field(default_factory=list)
 
-
-class GraphNode(BaseModel):
-    id: str
-    name: str
-    type: str
-    document_id: str | None = None
-    count: int = 1
-
-
-class GraphEdge(BaseModel):
-    source: str
-    target: str
-    type: str
-    weight: float = 1.0
-    document_id: str | None = None
-
-
-class GraphResponse(BaseModel):
-    nodes: list[GraphNode]
-    edges: list[GraphEdge]
-
-
-class ExpandRequest(BaseModel):
-    entity_name: str
-    collection_id: str
-    depth: int = Field(default=2, ge=1, le=4)
-
-
-class EntitySearchResponse(BaseModel):
-    entities: list[dict[str, Any]]
-    total: int
-    source: str = "neo4j"
-
-
-class InsightsResponse(BaseModel):
-    top_concepts: list[dict[str, Any]]
-    top_methods: list[dict[str, Any]]
-    most_connected: list[dict[str, Any]]
-    concept_co_occurrences: list[dict[str, Any]]
-    related_concepts: list[dict[str, Any]] = Field(default_factory=list)
-    total_entities: int
-    total_relationships: int

@@ -29,6 +29,6 @@ export const appConfig = (): AppConfig => ({
   },
   db: {
     type: process.env.DB_TYPE ?? 'sqlite',
-    name: process.env.DB_NAME ?? 'ledgerx.db',
+    name: process.env.DB_NAME ?? 'doclens.db',
   },
 });

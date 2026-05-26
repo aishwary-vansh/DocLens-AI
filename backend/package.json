@@ -1,5 +1,5 @@
 {
-  "name": "ledgerx-backend",
+  "name": "doclens-backend",
   "version": "1.0.0",
   "description": "DocLens Research Intelligence Platform - NestJS REST API",
   "author": "DocLens",

@@ -113,12 +113,12 @@ describe('AuthService', () => {
     it('should return accessToken and user', async () => {
       const result = await authService.login({
         id: '1',
-        email: 'admin@ledgerx.com',
+        email: 'admin@doclens.com',
         role: 'admin',
         name: 'Admin',
       });
       expect(result.accessToken).toBeDefined();
-      expect(result.user.email).toBe('admin@ledgerx.com');
+      expect(result.user.email).toBe('admin@doclens.com');
       expect(jwtService.sign).toHaveBeenCalled();
     });
   });

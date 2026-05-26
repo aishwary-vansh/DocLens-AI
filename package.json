@@ -1,5 +1,5 @@
 {
-  "name": "ledgerx-fullstack",
+  "name": "doclens-fullstack",
   "version": "1.0.0",
   "description": "DocLens AI - Knowledge Graph-Driven Research Intelligence Platform",
   "private": true,
@@ -46,7 +46,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aishwary-vansh/ledgerx-fullstack"
+    "url": "https://github.com/aishwary-vansh/DocLens-AI"
   },
   "devDependencies": {
     "@hono/node-server": "^1.19.13",

@@ -11,7 +11,7 @@ import { CollectionsModule } from './collections/collections.module';
 import { DocumentsModule } from './documents/documents.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { AppController } from './auth/app.controller';
+import { AppController } from './app.controller';
 
 // ── AI Intelligence Layer ───────────────────────────────────────────────────
 import { AiProxyModule } from './ai-proxy/ai-proxy.module';

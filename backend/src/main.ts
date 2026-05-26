@@ -38,10 +38,11 @@ async function bootstrap() {
 
   // ── CORS ─────────────────────────────────────────────────────────────────
   app.enableCors({
-    origin: corsOrigins,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    origin: true, // Dynamically reflects the incoming Origin, allowing any deployed frontend URL
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
+    optionsSuccessStatus: 204, // Ensure preflight returns 204 with proper headers
   });
 
   // ── Global validation pipe ───────────────────────────────────────────────

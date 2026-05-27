@@ -43,16 +43,37 @@ async def _notify_nestjs(
     data: dict | None = None,
     callback_url: str | None = None,
 ):
-    """Push a processing-stage callback to the NestJS backend."""
+    """Push a processing-stage callback to the NestJS backend.
+
+    Uses a 15-second timeout (instead of 5s) so that Render free-tier cold
+    starts have time to respond.  Retries once on transient network errors.
+    """
     payload = {"document_id": document_id, "status": status, **(data or {})}
     url = callback_url or settings.nestjs_callback_url
+    if "localhost" not in url:
+        logger.info("[%s] Notifying NestJS (%s) -> %s", document_id, status, url)
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(
-                url,
-                json=payload,
-                headers={"x-internal-secret": settings.internal_api_secret},
-            )
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for attempt in range(2):   # try twice
+                try:
+                    resp = await client.post(
+                        url,
+                        json=payload,
+                        headers={"x-internal-secret": settings.internal_api_secret},
+                    )
+                    if resp.status_code < 500:
+                        return   # success or client error — don't retry
+                    logger.warning(
+                        "[%s] NestJS callback attempt %d returned %d",
+                        document_id, attempt + 1, resp.status_code,
+                    )
+                except httpx.TransportError as exc:
+                    if attempt == 0:
+                        logger.warning(
+                            "[%s] NestJS callback attempt 1 failed (%s), retrying", document_id, exc
+                        )
+                    else:
+                        raise
     except Exception as exc:
         logger.warning("NestJS callback failed (%s): %s", document_id, exc)
 

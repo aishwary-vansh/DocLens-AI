@@ -4,15 +4,28 @@ import { ConfigService } from '@nestjs/config';
 import { readFile } from 'fs/promises';
 import { basename } from 'path';
 
+// The public URL of this NestJS backend — used as the callback target
+// that the AI service POSTs status updates to.  Must be set to the
+// Render service URL (e.g. https://doclens-hu8f.onrender.com/api/v1/internal/ai-callback)
+// so the AI service can reach it.  Falls back to localhost for local dev.
+
 @Injectable()
 export class AiProxyService {
   private readonly logger = new Logger(AiProxyService.name);
   private readonly base: string;
   private readonly internalSecret: string;
 
+  /** The public URL this NestJS backend is reachable at (used as AI-service callback). */
+  private readonly callbackUrl: string;
+
   constructor(private readonly config: ConfigService) {
     this.base = this.config.get<string>('AI_SERVICE_URL') ?? 'http://localhost:8000';
     this.internalSecret = this.config.get<string>('INTERNAL_API_SECRET') ?? 'doclens-internal-secret';
+    // NESTJS_CALLBACK_URL must be set in the Render environment to the full
+    // public URL, e.g. https://doclens-hu8f.onrender.com/api/v1/internal/ai-callback
+    this.callbackUrl =
+      this.config.get<string>('NESTJS_CALLBACK_URL') ??
+      'http://localhost:3001/api/v1/internal/ai-callback';
   }
 
   // ── Ingest ──────────────────────────────────────────────────────────────
@@ -32,9 +45,16 @@ export class AiProxyService {
     }
 
     const filename = basename(filePath);
+    this.logger.log(
+      `Forwarding ${filename} (${fileBytes.length} bytes) to AI service for document ${documentId}. ` +
+      `Callback URL: ${this.callbackUrl}`,
+    );
     return this.postMultipart('/ingest/process', fileBytes, filename, {
       document_id: documentId,
       collection_id: collectionId,
+      // Tell the AI service where to POST status updates back to.
+      // This overrides whatever NESTJS_CALLBACK_URL is set on the AI service container.
+      callback_url: this.callbackUrl,
     });
   }
 
@@ -186,8 +206,9 @@ export class AiProxyService {
       const res = await fetch(url, {
         method: 'POST',
         headers: {
+          // Do NOT set Content-Length — Node.js fetch computes it automatically.
+          // Setting it manually on a Buffer body causes "Content-Length header not allowed" errors.
           'Content-Type': `multipart/form-data; boundary=${boundary}`,
-          'Content-Length': String(body.length),
           'x-internal-secret': this.internalSecret,
         },
         body,

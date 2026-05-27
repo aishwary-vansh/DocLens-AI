@@ -25,8 +25,8 @@ import "./styles/research-platform.css";
 function LoadingSplash() {
   return (
     <div style={{
-      width: "100vw",
-      height: "100vh",
+      width: "100%",
+      height: "100dvh",
       display: "grid",
       placeItems: "center",
       background: "#080b0d",

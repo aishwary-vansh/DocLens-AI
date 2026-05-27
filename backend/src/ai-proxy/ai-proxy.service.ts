@@ -1,6 +1,8 @@
 // src/ai-proxy/ai-proxy.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { readFile } from 'fs/promises';
+import { basename } from 'path';
 
 @Injectable()
 export class AiProxyService {
@@ -15,10 +17,23 @@ export class AiProxyService {
 
   // ── Ingest ──────────────────────────────────────────────────────────────
 
+  /**
+   * Read the PDF from the local NestJS filesystem and forward it to the
+   * AI service as multipart/form-data.  This avoids the assumption that
+   * both services share a filesystem — critical on Render where each
+   * service has its own ephemeral disk.
+   */
   async processDocument(documentId: string, filePath: string, collectionId: string) {
-    return this.post('/ingest/process', {
+    let fileBytes: Buffer;
+    try {
+      fileBytes = await readFile(filePath);
+    } catch (err: any) {
+      throw new Error(`NestJS could not read uploaded file at ${filePath}: ${err.message}`);
+    }
+
+    const filename = basename(filePath);
+    return this.postMultipart('/ingest/process', fileBytes, filename, {
       document_id: documentId,
-      file_path: filePath,
       collection_id: collectionId,
     });
   }
@@ -130,6 +145,63 @@ export class AiProxyService {
   }
 
   // ── HTTP helpers ────────────────────────────────────────────────────────
+
+  /**
+   * POST a PDF as multipart/form-data together with extra form fields.
+   * The browser-native FormData is not available in Node — we build the
+   * multipart body manually so that no extra dependency is needed.
+   */
+  private async postMultipart<T = unknown>(
+    path: string,
+    fileBytes: Buffer,
+    filename: string,
+    fields: Record<string, string>,
+  ): Promise<T> {
+    const url = `${this.base}${path}`;
+    const boundary = `----DocLensBoundary${Date.now()}`;
+
+    const parts: Buffer[] = [];
+
+    // Regular form fields
+    for (const [key, value] of Object.entries(fields)) {
+      parts.push(
+        Buffer.from(
+          `--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`,
+        ),
+      );
+    }
+
+    // File field
+    parts.push(
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/pdf\r\n\r\n`,
+      ),
+    );
+    parts.push(fileBytes);
+    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+
+    const body = Buffer.concat(parts);
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': String(body.length),
+          'x-internal-secret': this.internalSecret,
+        },
+        body,
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`AI service error ${res.status}: ${text}`);
+      }
+      return res.json() as T;
+    } catch (err: any) {
+      this.logger.warn(`AI service multipart POST ${path} failed: ${err.message}`);
+      throw err;
+    }
+  }
 
   private async post<T = unknown>(path: string, body: unknown): Promise<T> {
     const url = `${this.base}${path}`;

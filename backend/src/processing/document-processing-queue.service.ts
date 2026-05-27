@@ -1,13 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { join } from 'path';
 import { AiProxyService } from '../ai-proxy/ai-proxy.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { PrismaService } from '../prisma/prisma.service';
+import { join } from 'path';
 
 interface ProcessDocumentJob {
   processingJobId: string;
   documentId: string;
-  filePath: string;
+  /** Absolute path to the PDF on the NestJS container's local filesystem. */
+  absoluteFilePath: string;
   collectionId: string;
 }
 
@@ -21,9 +22,15 @@ export class DocumentProcessingQueueService {
     private readonly events: EventsGateway,
   ) {}
 
+  /**
+   * @param documentId  DB document id
+   * @param fileUrl     Relative URL stored in DB, e.g. "uploads/<userId>/<filename>"
+   * @param collectionId
+   */
   async enqueueDocument(documentId: string, fileUrl: string, collectionId: string) {
-    // Resolve to absolute path so the AI service can locate the file
-    // fileUrl is stored as e.g. "uploads/<userId>/<filename>"
+    // Resolve to an absolute path on the NestJS container.
+    // AiProxyService.processDocument() reads this file and streams the bytes
+    // to the AI service — no shared filesystem required.
     const absoluteFilePath = join(process.cwd(), fileUrl);
 
     const processingJob = await this.prisma.processingJob.create({
@@ -33,14 +40,14 @@ export class DocumentProcessingQueueService {
         status: 'QUEUED',
         progress: 0,
         maxAttempts: 1,
-        payload: { documentId, filePath: absoluteFilePath, collectionId },
+        payload: { documentId, absoluteFilePath, collectionId },
       },
     });
 
     void this.runJobDirect({
       processingJobId: processingJob.id,
       documentId,
-      filePath: absoluteFilePath,
+      absoluteFilePath,
       collectionId,
     });
 
@@ -48,7 +55,7 @@ export class DocumentProcessingQueueService {
   }
 
   private async runJobDirect(job: ProcessDocumentJob) {
-    const { processingJobId, documentId, filePath, collectionId } = job;
+    const { processingJobId, documentId, absoluteFilePath, collectionId } = job;
     try {
       await this.prisma.processingJob.update({
         where: { id: processingJobId },
@@ -66,7 +73,9 @@ export class DocumentProcessingQueueService {
       });
       this.events.emitStatusChanged(collectionId, doc);
 
-      await this.aiProxy.processDocument(documentId, filePath, collectionId);
+      // AiProxyService reads the file bytes from absoluteFilePath and
+      // POSTs them as multipart/form-data — no cross-service file access.
+      await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
 
       await this.prisma.processingJob.update({
         where: { id: processingJobId },

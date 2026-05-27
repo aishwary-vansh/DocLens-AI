@@ -37,12 +37,10 @@ services:
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-change-this-in-production}
       MODEL_NAME: all-MiniLM-L6-v2
       FAISS_INDEX_PATH: /app/data/faiss.index
-      UPLOAD_DIR: /shared/backend
       CORS_ORIGINS: http://backend:3001
       ENFORCE_INTERNAL_AUTH: "true"
     volumes:
       - ai-data:/app/data
-      - backend-uploads:/shared/backend/uploads
     depends_on:
       postgres:
         condition: service_healthy

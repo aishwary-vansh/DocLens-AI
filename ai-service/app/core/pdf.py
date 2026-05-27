@@ -35,7 +35,7 @@ class DocumentContent:
 
 
 def extract(file_path: str) -> DocumentContent:
-    """Extract text, OCR fallback content, and paper metadata from a PDF."""
+    """Extract text and metadata from a PDF on the local filesystem."""
     try:
         import fitz
     except ImportError as exc:
@@ -47,6 +47,30 @@ def extract(file_path: str) -> DocumentContent:
 
     logger.info("Extracting PDF: %s", path.name)
     doc = fitz.open(str(path))
+    return _extract_from_doc(doc, source_name=path.stem)
+
+
+def extract_bytes(data: bytes, source_name: str = "uploaded") -> DocumentContent:
+    """
+    Extract text and metadata from raw PDF bytes held in memory.
+
+    This is the preferred entry point when the PDF was received over HTTP
+    (e.g. forwarded from the NestJS backend as multipart/form-data) and
+    no local file path is available — which is always the case on hosted
+    platforms like Render where each service has its own ephemeral disk.
+    """
+    try:
+        import fitz
+    except ImportError as exc:
+        raise RuntimeError("PyMuPDF not installed. Run: pip install pymupdf") from exc
+
+    logger.info("Extracting PDF from memory (%d bytes, source=%s)", len(data), source_name)
+    doc = fitz.open(stream=data, filetype="pdf")
+    return _extract_from_doc(doc, source_name=source_name)
+
+
+def _extract_from_doc(doc, source_name: str) -> DocumentContent:
+    """Shared extraction logic for both file-path and in-memory paths."""
     meta = doc.metadata or {}
 
     pages: list[PageContent] = []
@@ -73,7 +97,7 @@ def extract(file_path: str) -> DocumentContent:
     total_pdf_pages = doc.page_count
     doc.close()
 
-    title = _parse_title(meta, pages, path.stem)
+    title = _parse_title(meta, pages, source_name)
     authors = _parse_authors(meta, pages)
     abstract = _parse_abstract(pages)
     full_text = "\n\n".join(page.text for page in pages)
@@ -94,7 +118,7 @@ def extract(file_path: str) -> DocumentContent:
         abstract=abstract,
         pages=pages,
         total_pages=total_pdf_pages,
-        file_path=str(path),
+        file_path=source_name,
         doi=doi,
         keywords=keywords,
         metadata={

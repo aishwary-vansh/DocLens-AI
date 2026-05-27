@@ -19,14 +19,6 @@ ProcessingStage = Literal[
 RetrievalMode = Literal["vector"]
 
 
-class IngestRequest(BaseModel):
-    document_id: str
-    file_path: str
-    collection_id: str
-    workspace_id: str | None = None
-    callback_url: str | None = None
-
-
 class IngestResponse(BaseModel):
     document_id: str
     status: str

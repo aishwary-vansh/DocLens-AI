@@ -1,20 +1,20 @@
 """Document ingestion API and background processing pipeline."""
 from __future__ import annotations
 
+import io
 import logging
-import os
 import json
 import threading
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, UploadFile, File
 
 from app.config import get_settings
 from app.core import chunker, pdf
 from app.core.embedder import embed_texts
 from app.core.index import ChunkMeta, get_faiss_index
-from app.models.schemas import IngestRequest, IngestResponse, StatusResponse
+from app.models.schemas import IngestResponse, StatusResponse
 
 router = APIRouter()
 settings = get_settings()
@@ -69,25 +69,24 @@ def _set_status(document_id: str, stage: str, progress: int, error: str | None =
 
 async def _run_pipeline(
     document_id: str,
-    file_path: str,
+    pdf_bytes: bytes,
     collection_id: str,
     callback_url: str | None = None,
 ):
-    """Run extraction, chunking, embedding, FAISS indexing, and concept extraction."""
-    # Resolve the file path correctly on Windows (handles mixed separators)
-    if os.path.isabs(file_path):
-        abs_path = str(Path(file_path).resolve())
-    else:
-        # upload_dir is relative to AI service CWD; file_path is relative to backend CWD
-        # Normalize slashes before joining (important on Windows)
-        normalized = file_path.replace("\\", "/")
-        abs_path = str((Path(settings.upload_dir) / normalized).resolve())
+    """
+    Run extraction, chunking, embedding, FAISS indexing, and concept extraction.
 
+    Accepts raw PDF bytes — no filesystem path required.  This makes the
+    pipeline work correctly when the NestJS backend and FastAPI AI service
+    are deployed as separate services (e.g. on Render) with no shared disk.
+    """
     try:
         _set_status(document_id, "EXTRACTING", 10)
         await _notify_nestjs(document_id, "EXTRACTING", callback_url=callback_url)
-        logger.info("[%s] Extracting PDF: %s", document_id, abs_path)
-        content = pdf.extract(abs_path)
+
+        logger.info("[%s] Extracting PDF from memory (%d bytes)", document_id, len(pdf_bytes))
+        # Pass bytes directly — no temp file needed
+        content = pdf.extract_bytes(pdf_bytes)
 
         _set_status(document_id, "CHUNKING", 35)
         await _notify_nestjs(document_id, "CHUNKING", callback_url=callback_url)
@@ -122,8 +121,6 @@ async def _run_pipeline(
         vector_ids = index.add(embeddings, metas)
         logger.info("[%s] Added %d vectors to FAISS", document_id, len(metas))
 
-
-
         _set_status(document_id, "READY", 100)
         await _notify_nestjs(
             document_id,
@@ -155,16 +152,7 @@ async def _run_pipeline(
             },
             callback_url=callback_url,
         )
-        logger.info(
-            "[%s] Pipeline ready: %d chunks",
-            document_id,
-            len(chunks),
-        )
-
-    except FileNotFoundError as exc:
-        _set_status(document_id, "FAILED", 0, str(exc))
-        await _notify_nestjs(document_id, "FAILED", {"error": str(exc)}, callback_url)
-        logger.error("[%s] File not found: %s", document_id, exc)
+        logger.info("[%s] Pipeline ready: %d chunks", document_id, len(chunks))
 
     except Exception as exc:
         _set_status(document_id, "FAILED", 0, str(exc))
@@ -173,18 +161,49 @@ async def _run_pipeline(
 
 
 @router.post("/process", response_model=IngestResponse)
-async def process_document(req: IngestRequest, background_tasks: BackgroundTasks):
-    """Queue a document processing job."""
-    _set_status(req.document_id, "UPLOADED", 0)
+async def process_document(
+    background_tasks: BackgroundTasks,
+    document_id: str = Form(...),
+    collection_id: str = Form(...),
+    callback_url: str | None = Form(default=None),
+    file: UploadFile = File(...),
+):
+    """
+    Accept a PDF upload and queue it for processing.
+
+    The endpoint receives the PDF as multipart/form-data so no shared
+    filesystem between the NestJS backend and this AI service is required.
+    Works on Render, Railway, Fly.io, and any other platform where each
+    service has its own ephemeral disk.
+    """
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only PDF files are accepted, got: {file.content_type}",
+        )
+
+    pdf_bytes = await file.read()
+    if not pdf_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    logger.info(
+        "[%s] Received PDF upload: %s (%d bytes) for collection %s",
+        document_id,
+        file.filename,
+        len(pdf_bytes),
+        collection_id,
+    )
+
+    _set_status(document_id, "UPLOADED", 0)
     background_tasks.add_task(
         _run_pipeline,
-        req.document_id,
-        req.file_path,
-        req.collection_id,
-        req.callback_url,
+        document_id,
+        pdf_bytes,
+        collection_id,
+        callback_url,
     )
     return IngestResponse(
-        document_id=req.document_id,
+        document_id=document_id,
         status="queued",
         message="Pipeline started in background",
     )

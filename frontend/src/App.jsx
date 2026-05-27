@@ -68,11 +68,48 @@ function ActivePage() {
 }
 
 function AppInner() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, logout } = useAuth();
   const { activePage, activeCollectionId } = useApp();
   const [showLogin, setShowLogin] = useState(false);
+  const [showLanding, setShowLanding] = useState(false);
 
   if (isLoading) return <LoadingSplash />;
+
+  // Authenticated user explicitly asked to see the landing page
+  if (isAuthenticated && showLanding) {
+    return (
+      <>
+        <CustomCursor />
+        {/* Floating banner so the user can get back into the app */}
+        <div style={{
+          position: 'fixed', top: 16, right: 16, zIndex: 9999,
+          display: 'flex', gap: 8, alignItems: 'center',
+        }}>
+          <button
+            onClick={() => setShowLanding(false)}
+            style={{
+              padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(110,231,249,0.35)',
+              background: 'rgba(110,231,249,0.12)', color: '#6ee7f9',
+              fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer',
+            }}
+          >
+            ← Back to App
+          </button>
+          <button
+            onClick={logout}
+            style={{
+              padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(242,139,130,0.35)',
+              background: 'rgba(242,139,130,0.1)', color: '#f28b82',
+              fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer',
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+        <Landing onGetStarted={() => setShowLanding(false)} />
+      </>
+    );
+  }
 
   if (!isAuthenticated) {
     if (showLogin) {
@@ -89,7 +126,7 @@ function AppInner() {
   return (
     <>
       <CustomCursor />
-      <Layout>
+      <Layout onShowLanding={() => setShowLanding(true)}>
         <ErrorBoundary resetKey={`${activePage}-${activeCollectionId || ""}`}>
           <ActivePage />
         </ErrorBoundary>

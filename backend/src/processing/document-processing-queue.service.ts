@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { join } from 'path';
 import { AiProxyService } from '../ai-proxy/ai-proxy.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,7 +21,11 @@ export class DocumentProcessingQueueService {
     private readonly events: EventsGateway,
   ) {}
 
-  async enqueueDocument(documentId: string, filePath: string, collectionId: string) {
+  async enqueueDocument(documentId: string, fileUrl: string, collectionId: string) {
+    // Resolve to absolute path so the AI service can locate the file
+    // fileUrl is stored as e.g. "uploads/<userId>/<filename>"
+    const absoluteFilePath = join(process.cwd(), fileUrl);
+
     const processingJob = await this.prisma.processingJob.create({
       data: {
         documentId,
@@ -28,14 +33,14 @@ export class DocumentProcessingQueueService {
         status: 'QUEUED',
         progress: 0,
         maxAttempts: 1,
-        payload: { documentId, filePath, collectionId },
+        payload: { documentId, filePath: absoluteFilePath, collectionId },
       },
     });
 
     void this.runJobDirect({
       processingJobId: processingJob.id,
       documentId,
-      filePath,
+      filePath: absoluteFilePath,
       collectionId,
     });
 

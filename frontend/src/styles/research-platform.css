@@ -252,21 +252,33 @@ textarea {
 }
 
 .sidebar-logout {
-  width: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
   height: 30px;
-  flex: 0 0 30px;
-  display: grid;
-  place-items: center;
+  flex: 0 0 auto;
   border: 1px solid var(--rp-border);
   border-radius: var(--rp-radius);
   background: transparent;
   color: var(--rp-text-muted);
   cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.sidebar-logout-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .sidebar-logout:hover {
   color: var(--rp-rose);
   border-color: rgba(242, 139, 130, 0.35);
+  background: rgba(242, 139, 130, 0.06);
 }
 
 .research-topbar {

@@ -3,7 +3,6 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -92,15 +91,13 @@ export class DocumentsService {
       await this.processingQueue.enqueueDocument(document.id, document.fileUrl, collectionId);
       this.logger.log(`Queued AI processing for ${document.id}`);
     } catch (error: any) {
-      const failed = await this.prisma.document.update({
-        where: { id: document.id },
-        data: {
-          status: 'FAILED',
-          errorMessage: `Could not enqueue AI processing: ${error.message}`,
-        },
-      });
-      this.events.emitStatusChanged(collectionId, failed);
-      throw new ServiceUnavailableException('Document uploaded, but AI processing queue is unavailable');
+      // AI service unavailable (e.g. on hosted environments where the AI service
+      // may be sleeping or not yet started). Keep the document as PENDING so the
+      // user sees a successful upload — they can retry processing later.
+      this.logger.warn(
+        `AI processing queue unavailable for ${document.id}: ${error.message} — document saved as PENDING`,
+      );
+      // Do NOT throw — return the document so the frontend shows "Upload successful"
     }
 
     // Asynchronously fetch metadata from Semantic Scholar

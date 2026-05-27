@@ -16,7 +16,7 @@ const NAV_ITEMS = [
   { id: PAGES.SETTINGS, label: "Settings", icon: "settings" },
 ];
 
-const Sidebar = () => {
+const Sidebar = ({ onShowLanding }) => {
   const { activePage, navigateTo } = useApp();
   const { logout, user } = useAuth();
   const socket = useSocket();
@@ -25,13 +25,19 @@ const Sidebar = () => {
 
   return (
     <aside className="research-sidebar" aria-label="Research workspace navigation">
-      <div className="brand-lockup">
+      <button
+        className="brand-lockup brand-lockup-btn"
+        onClick={onShowLanding}
+        title="View DocLens landing page"
+        type="button"
+        style={{ background: 'none', border: 'none', cursor: onShowLanding ? 'pointer' : 'default', padding: 0, width: '100%', textAlign: 'left' }}
+      >
         <div className="brand-mark"><Icon name="spark" size={20} /></div>
         <div>
           <strong>DocLens</strong>
           <span>Research Intelligence</span>
         </div>
-      </div>
+      </button>
 
       <div className="sidebar-section-label">Workspace</div>
       <nav className="sidebar-nav">
@@ -62,8 +68,9 @@ const Sidebar = () => {
           <strong>{user?.name || "Researcher"}</strong>
           <span>{user?.email || "doclens user"}</span>
         </div>
-        <button className="sidebar-logout" onClick={logout} title="Sign out" type="button">
-          <Icon name="arrowRight" size={15} />
+        <button className="sidebar-logout" onClick={logout} title="Sign out of DocLens" aria-label="Sign out" type="button">
+          <Icon name="arrowRight" size={14} />
+          <span className="sidebar-logout-label">Sign out</span>
         </button>
       </div>
       <div style={{ textAlign: 'center', fontSize: '0.65rem', color: 'var(--rp-text-muted)', opacity: 0.5, marginTop: 10 }}>

@@ -1,9 +1,9 @@
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
-const Layout = ({ children }) => (
+const Layout = ({ children, onShowLanding }) => (
   <div className="research-app-shell">
-    <Sidebar />
+    <Sidebar onShowLanding={onShowLanding} />
     <div className="research-main-shell">
       <Topbar />
       <main className="research-main">

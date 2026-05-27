@@ -103,6 +103,16 @@ const PapersPage = () => {
     }
   };
 
+  const deletePaper = async (paper) => {
+    if (!window.confirm(`Are you sure you want to delete "${paper.title}"?`)) return;
+    try {
+      await documentsApi.remove(paper.id);
+      await refresh();
+    } catch (err) {
+      setUploadError(err?.message || "Failed to delete paper.");
+    }
+  };
+
   const columns = [
     {
       key: "title",
@@ -120,6 +130,22 @@ const PapersPage = () => {
     { key: "pages",          label: "Pages" },
     { key: "status",         label: "Status",    render: p => <ProcessingStatusBadge status={p.status} /> },
     { key: "citations",      label: "Citations" },
+    {
+      key: "actions",
+      label: "",
+      render: (p) => (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); deletePaper(p); }}
+          style={{ color: "var(--rp-rose)", opacity: 0.6, border: "none", background: "none", cursor: "pointer", padding: "4px" }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = 0.6)}
+          title="Delete paper"
+        >
+          <Icon name="trash" size={16} />
+        </button>
+      )
+    }
   ];
 
   return (
@@ -204,7 +230,7 @@ const PapersPage = () => {
         />
       ) : view === "grid" ? (
         <div className="paper-card-grid">
-          {filteredPapers.map(p => <PaperCard key={p.id} paper={p} />)}
+          {filteredPapers.map(p => <PaperCard key={p.id} paper={p} onDelete={deletePaper} />)}
           {!filteredPapers.length && (
             <EmptyState compact icon="filter" title="No papers match this filter" description="Try another search term or status filter." />
           )}

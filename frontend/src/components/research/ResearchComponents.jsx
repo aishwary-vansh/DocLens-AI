@@ -58,12 +58,27 @@ export function CitationBadge({ count = 0 }) {
   );
 }
 
-export function PaperCard({ paper, onOpen }) {
+export function PaperCard({ paper, onOpen, onDelete }) {
   return (
     <article className="paper-card" onClick={onOpen}>
       <div className="paper-card-header">
         <div className="paper-file-icon"><Icon name="papers" size={20} /></div>
-        <ProcessingStatusBadge status={paper.status} />
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <ProcessingStatusBadge status={paper.status} />
+          {onDelete && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onDelete(paper); }}
+              className="icon-button"
+              style={{ color: "var(--rp-rose)", opacity: 0.6, border: "none", background: "none", cursor: "pointer", padding: "2px" }}
+              onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
+              onMouseLeave={(e) => (e.currentTarget.style.opacity = 0.6)}
+              title="Delete paper"
+            >
+              <Icon name="trash" size={16} />
+            </button>
+          )}
+        </div>
       </div>
       <h3>{paper.title}</h3>
       <p className="paper-authors">{paper.authors || "Author metadata pending"}</p>

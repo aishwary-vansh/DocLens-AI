@@ -67,6 +67,8 @@
   .cursor {
     @apply fixed w-[9px] h-[9px] rounded-full pointer-events-none z-[9999];
     background: var(--color-indigo);
+    top: 0;
+    left: 0;
     transform: translate(-50%, -50%);
     transition: width 0.15s, height 0.15s, opacity 0.15s;
     mix-blend-mode: normal;
@@ -74,6 +76,8 @@
   .cursor-ring {
     @apply fixed w-[30px] h-[30px] border-[1.5px] rounded-full pointer-events-none z-[9998];
     border-color: rgba(91,108,248,0.35);
+    top: 0;
+    left: 0;
     transform: translate(-50%, -50%);
   }
 

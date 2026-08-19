@@ -76,9 +76,19 @@ def search(req: SearchRequest):
     # Simply perform vector search without LLM
     try:
         from vector_store.pg_store import pg_store
-        from ingest import model
+        from ingest import get_model, get_reranker
+        model = get_model()
         q_emb = model.encode(req.query).tolist()
-        chunks = pg_store.search(q_emb, req.collectionId, req.documentIds, req.topK)
+        chunks = pg_store.search(req.query, q_emb, req.collectionId, req.documentIds, top_k=40)
+        
+        if chunks:
+            reranker = get_reranker()
+            pairs = [[req.query, c["content"]] for c in chunks]
+            scores = reranker.predict(pairs)
+            for i, chunk in enumerate(chunks):
+                chunk["score"] = float(scores[i])
+            chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:req.topK]
+            
         return chunks
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

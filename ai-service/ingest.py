@@ -1,9 +1,24 @@
 from docling.document_converter import DocumentConverter
 from docling.chunking import HierarchicalChunker
-from sentence_transformers import SentenceTransformer
-from vector_store.pg_store import pg_store
+_model = None
 
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+def get_model():
+    global _model
+    if _model is None:
+        from sentence_transformers import SentenceTransformer
+        _model = SentenceTransformer('BAAI/bge-m3')
+    return _model
+
+_reranker = None
+
+def get_reranker():
+    global _reranker
+    if _reranker is None:
+        from sentence_transformers import CrossEncoder
+        _reranker = CrossEncoder('BAAI/bge-reranker-v2-m3')
+    return _reranker
+
+from vector_store.pg_store import pg_store
 
 def ingest_document(document_id: str, file_path: str, collection_id: str):
     """
@@ -67,6 +82,7 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
 
     # 3. Compute embeddings
     texts_to_embed = [c["content"] for c in all_chunks]
+    model = get_model()
     embeddings = model.encode(texts_to_embed)
     
     for i, c in enumerate(all_chunks):

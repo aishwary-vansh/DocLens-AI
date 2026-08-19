@@ -53,39 +53,53 @@ class PgStore:
         finally:
             conn.close()
 
-    def search(self, query_embedding, collection_id, document_ids=None, top_k=5):
+    def search(self, query: str, query_embedding: list, collection_id: str, document_ids=None, top_k=40):
         """
-        Search vector database for closest chunks.
+        Hybrid search vector database (BM25 + Dense) using Reciprocal Rank Fusion (RRF).
         """
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
                 if document_ids and len(document_ids) > 0:
-                    cur.execute(
-                        """
-                        SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber", 
-                        1 - (c.embedding <=> %s::vector) AS score
-                        FROM "DocumentChunk" c
-                        WHERE c."documentId" = ANY(%s)
-                        ORDER BY c.embedding <=> %s::vector
-                        LIMIT %s
-                        """,
-                        (query_embedding, document_ids, query_embedding, top_k)
-                    )
+                    where_clause = 'WHERE c."documentId" = ANY(%s)'
+                    params_semantic = (query_embedding, document_ids, query_embedding)
+                    params_keyword = (query, document_ids, query)
                 else:
-                    cur.execute(
-                        """
-                        SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber", 
-                        1 - (c.embedding <=> %s::vector) AS score
-                        FROM "DocumentChunk" c
-                        JOIN "Document" d ON c."documentId" = d.id
-                        WHERE d."collectionId" = %s
-                        ORDER BY c.embedding <=> %s::vector
-                        LIMIT %s
-                        """,
-                        (query_embedding, collection_id, query_embedding, top_k)
-                    )
+                    where_clause = 'JOIN "Document" d ON c."documentId" = d.id WHERE d."collectionId" = %s'
+                    params_semantic = (query_embedding, collection_id, query_embedding)
+                    params_keyword = (query, collection_id, query)
                 
+                sql = f"""
+                WITH semantic_search AS (
+                    SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber", 
+                    RANK() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
+                    FROM "DocumentChunk" c
+                    {where_clause}
+                    ORDER BY c.embedding <=> %s::vector
+                    LIMIT 100
+                ),
+                keyword_search AS (
+                    SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber", 
+                    RANK() OVER (ORDER BY ts_rank_cd(to_tsvector('english', c.content), plainto_tsquery('english', %s)) DESC) AS rank
+                    FROM "DocumentChunk" c
+                    {where_clause}
+                    ORDER BY ts_rank_cd(to_tsvector('english', c.content), plainto_tsquery('english', %s)) DESC
+                    LIMIT 100
+                )
+                SELECT 
+                    COALESCE(s.id, k.id) as id,
+                    COALESCE(s."documentId", k."documentId") as "documentId",
+                    COALESCE(s."chunkIndex", k."chunkIndex") as "chunkIndex",
+                    COALESCE(s.content, k.content) as content,
+                    COALESCE(s."pageNumber", k."pageNumber") as "pageNumber",
+                    COALESCE(1.0 / (60.0 + s.rank), 0.0) + COALESCE(1.0 / (60.0 + k.rank), 0.0) AS score
+                FROM semantic_search s
+                FULL OUTER JOIN keyword_search k ON s.id = k.id
+                ORDER BY score DESC
+                LIMIT %s
+                """
+                
+                cur.execute(sql, params_semantic + params_keyword + (top_k,))
                 rows = cur.fetchall()
                 results = []
                 for row in rows:

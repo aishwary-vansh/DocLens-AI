@@ -2,7 +2,7 @@ import os
 import requests
 import google.generativeai as genai
 from vector_store.pg_store import pg_store
-from ingest import model
+from ingest import get_model, get_reranker
 
 def call_llm(prompt: str, system_message: str = "You are a helpful research assistant.", history: list = None):
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -56,9 +56,18 @@ def format_citations(chunks):
     return context_text, citations
 
 def ask_question(question: str, collection_id: str, document_ids=None, top_k=10, history=None):
+    model = get_model()
     query_embedding = model.encode(question).tolist()
     
-    chunks = pg_store.search(query_embedding, collection_id, document_ids, top_k)
+    chunks = pg_store.search(question, query_embedding, collection_id, document_ids, top_k=40)
+    
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[question, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
     
     if not chunks:
         return {"answer": "No relevant context found to answer the question.", "citations": []}
@@ -87,8 +96,18 @@ Question: {question}"""
 def summarize_document(document_id: str):
     # Dummy embedding to just get chunks or we can just fetch chunks from DB directly.
     # To summarize, we'll fetch top chunks that are most central, or just fetch random chunks for now.
-    query_embedding = model.encode("summary overview abstract introduction").tolist()
-    chunks = pg_store.search(query_embedding, None, [document_id], top_k=10)
+    model = get_model()
+    query = "summary overview abstract introduction"
+    query_embedding = model.encode(query).tolist()
+    chunks = pg_store.search(query, query_embedding, None, [document_id], top_k=40)
+    
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[query, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:10]
     
     if not chunks:
          return {"summary": "No text found for this document to summarize."}
@@ -100,8 +119,18 @@ def summarize_document(document_id: str):
     return {"summary": summary}
 
 def review_document(document_id: str):
-    query_embedding = model.encode("conclusion findings limitations future work").tolist()
-    chunks = pg_store.search(query_embedding, None, [document_id], top_k=10)
+    model = get_model()
+    query = "conclusion findings limitations future work"
+    query_embedding = model.encode(query).tolist()
+    chunks = pg_store.search(query, query_embedding, None, [document_id], top_k=40)
+    
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[query, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:10]
     
     if not chunks:
          return {"review": "No text found for this document to review."}
@@ -114,9 +143,18 @@ def review_document(document_id: str):
 
 def compare_documents(document_ids, collection_id, question, top_k=12):
     query = question if question else "Compare the main findings, methodologies, and conclusions."
+    model = get_model()
     query_embedding = model.encode(query).tolist()
     
-    chunks = pg_store.search(query_embedding, collection_id, document_ids, top_k)
+    chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=40)
+    
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[query, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
     
     if not chunks:
         return {"answer": "No relevant context found to compare.", "citations": []}
@@ -133,9 +171,18 @@ def compare_documents(document_ids, collection_id, question, top_k=12):
 
 def literature_review(collection_id, document_ids, topic):
     query = topic if topic else "Comprehensive literature review"
+    model = get_model()
     query_embedding = model.encode(query).tolist()
     
-    chunks = pg_store.search(query_embedding, collection_id, document_ids, top_k=15)
+    chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=40)
+    
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[query, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:15]
     
     if not chunks:
         return {"review": "No relevant context found."}

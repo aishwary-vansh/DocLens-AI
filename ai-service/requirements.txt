@@ -1,9 +1,11 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch
+
 fastapi
 uvicorn
+docling
 pymupdf
 sentence-transformers
+torch
 psycopg2-binary
 pgvector
 requests

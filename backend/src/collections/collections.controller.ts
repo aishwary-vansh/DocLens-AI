@@ -9,9 +9,11 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { CacheInterceptor } from '@nestjs/cache-manager';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -46,6 +48,7 @@ export class CollectionsController {
 
   // ─── GET /collections?workspaceId=xxx ─────────────────────────────────────
   @Get()
+  @UseInterceptors(CacheInterceptor)
   @ApiOperation({ summary: 'List collections for a given workspace' })
   @ApiOkResponse({ description: 'Array of collections' })
   @ApiQuery({ name: 'workspaceId', required: true })
@@ -55,6 +58,7 @@ export class CollectionsController {
 
   // ─── GET /collections/:id ─────────────────────────────────────────────────
   @Get(':id')
+  @UseInterceptors(CacheInterceptor)
   @ApiOperation({ summary: 'Get a single collection' })
   @ApiOkResponse({ description: 'Collection object' })
   @ApiNotFoundResponse({ description: 'Collection not found' })

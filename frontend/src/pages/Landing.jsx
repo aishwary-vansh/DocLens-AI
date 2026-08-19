@@ -2,20 +2,17 @@
 // Assembles all landing page sections. Scoped under .landing-root to prevent
 // style leakage into the main application.
 import './landing/landing.css';
-import BgCanvas       from './landing/BgCanvas';
-import LandingNav     from './landing/LandingNav';
-import LandingHero    from './landing/LandingHero';
-import LandingMarquee from './landing/LandingMarquee';
+import BgCanvas        from './landing/BgCanvas';
+import { HeroSection } from '../components/blocks/HeroSection';
 import LandingFeatures from './landing/LandingFeatures';
 import LandingPipeline from './landing/LandingPipeline';
-import LandingStats   from './landing/LandingStats';
-import LandingTech    from './landing/LandingTech';
-import LandingCTA     from './landing/LandingCTA';
-import LandingFooter  from './landing/LandingFooter';
+import LandingTech     from './landing/LandingTech';
+import LandingCTA      from './landing/LandingCTA';
+import LandingFooter   from './landing/LandingFooter';
 
 /**
  * @param {{ onGetStarted: () => void }} props
- *   `onGetStarted` — called when the user clicks "Get Started" / "Explore".
+ *   `onGetStarted` — called when the user clicks "Get Started" / "Sign Up".
  *   The parent (App.jsx) switches to the Login view.
  */
 const Landing = ({ onGetStarted }) => (
@@ -23,11 +20,10 @@ const Landing = ({ onGetStarted }) => (
     {/* Full-viewport canvas particle network */}
     <BgCanvas />
 
-    {/* Fixed navigation */}
-    <LandingNav onGetStarted={onGetStarted} />
+    {/* Animated hero section with integrated nav */}
+    <HeroSection onGetStarted={onGetStarted} />
 
     {/* Sections */}
-    <LandingHero    onGetStarted={onGetStarted} />
     <LandingFeatures />
     <LandingPipeline />
     <LandingTech />

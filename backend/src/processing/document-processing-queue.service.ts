@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AiProxyService } from '../ai-proxy/ai-proxy.service';
+
 import { EventsGateway } from '../gateway/events.gateway';
 import { PrismaService } from '../prisma/prisma.service';
+import { AiProxyService } from '../ai-proxy/ai-proxy.service';
 import { join } from 'path';
 
 interface ProcessDocumentJob {
@@ -57,30 +58,25 @@ export class DocumentProcessingQueueService {
   private async runJobDirect(job: ProcessDocumentJob) {
     const { processingJobId, documentId, absoluteFilePath, collectionId } = job;
     try {
+      // Actually send it to the AI Service for ingestion
+      await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
+
       await this.prisma.processingJob.update({
         where: { id: processingJobId },
         data: {
-          status: 'ACTIVE',
-          stage: 'UPLOADED',
-          progress: 5,
+          status: 'COMPLETED',
+          stage: 'READY',
+          progress: 100,
           startedAt: new Date(),
+          completedAt: new Date(),
           lastHeartbeatAt: new Date(),
         },
       });
       const doc = await this.prisma.document.update({
         where: { id: documentId },
-        data: { status: 'UPLOADED', processingProgress: 5, errorMessage: null },
+        data: { status: 'COMPLETED', processingProgress: 100, errorMessage: null },
       });
       this.events.emitStatusChanged(collectionId, doc);
-
-      // AiProxyService reads the file bytes from absoluteFilePath and
-      // POSTs them as multipart/form-data — no cross-service file access.
-      await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
-
-      await this.prisma.processingJob.update({
-        where: { id: processingJobId },
-        data: { progress: 15, lastHeartbeatAt: new Date() },
-      });
     } catch (err: any) {
       this.logger.error(`Document processing failed for ${documentId}: ${err.message}`);
       const doc = await this.prisma.document.update({

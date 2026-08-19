@@ -1,25 +1,10 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-pydantic-settings>=2.0.0
-
-# PDF extraction — PyMuPDF handles text extraction natively, no poppler needed
-pymupdf>=1.24.0
-
-# NLP + Embeddings
-# CPU-only torch — avoids pulling in 1.5GB of CUDA wheels on Render
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.3.0
-sentence-transformers>=3.0.0
-
-# Vector search
-faiss-cpu>=1.8.0
-
-# LLM — OpenRouter via OpenAI-compatible client only (no local model needed)
-openai>=1.40.0
-
-# HTTP
-httpx>=0.27.0
-
-# Utilities
-python-multipart>=0.0.9
-python-dotenv>=1.0.0
+fastapi
+uvicorn
+pymupdf
+sentence-transformers
+psycopg2-binary
+pgvector
+requests
+python-dotenv
+pydantic
+google-generativeai

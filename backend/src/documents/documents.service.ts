@@ -43,7 +43,10 @@ type AiRelationshipPayload = {
 
 type AiPersistPayload = {
   title?: string;
+  authors?: string[];
   page_count?: number;
+  word_count?: number;
+  reading_time_minutes?: number;
   doi?: string;
   keywords?: string[];
   chunks?: AiChunkPayload[];
@@ -302,6 +305,9 @@ export class DocumentsService {
               vectorStore: payload.vector_store,
               doi: payload.doi,
               keywords: payload.keywords ?? [],
+              authors: payload.authors ?? [],
+              wordCount: payload.word_count,
+              readingTimeMinutes: payload.reading_time_minutes,
             },
           },
         });

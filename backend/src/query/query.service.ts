@@ -98,6 +98,18 @@ export class QueryService {
     await this.assertCollectionAccess(collectionId, userId);
 
     const session = await this.resolveChatSession(userId, collectionId, sessionId, question);
+
+    const historyQueries = await this.prisma.query.findMany({
+      where: { chatSessionId: session.id },
+      orderBy: { createdAt: 'asc' },
+      take: 20,
+    });
+    
+    const history = historyQueries.flatMap(q => [
+      { role: 'user', content: q.question },
+      { role: 'model', content: q.answer || '' }
+    ]);
+
     const evidence = await this.retrieveEvidence(question, collectionId, userId, topK, documentIds);
     if (!evidence.length) {
       throw new BadRequestException(
@@ -118,6 +130,7 @@ export class QueryService {
         topK,
         'vector',
         documentIds,
+        history,
       );
       const rawCitations = await this.normalizeAiCitations(raw.citations ?? [], evidence);
       citations = rawCitations.length ? rawCitations : citations;
@@ -300,6 +313,17 @@ export class QueryService {
       summary: this.ensureAnswerHasCitationRefs(this.composeAnswer('Summarize this paper', evidence), evidence),
       citations: this.citationsFromEvidence(evidence),
     };
+  }
+
+  async reviewDocument(documentId: string, userId?: string) {
+    const document = await this.prisma.document.findFirst({
+      where: {
+        id: documentId,
+        ...(userId ? { collection: { workspace: { userId } } } : {}),
+      },
+    });
+    if (!document) throw new NotFoundException('Document not found');
+    return this.ai.reviewDocument(documentId);
   }
 
   async compare(

@@ -6,49 +6,33 @@ import {
   ActionButton,
   EmptyState,
   ErrorNotice,
-  PageHeader,
   ProcessingStatusBadge,
 } from "../components/research/ResearchComponents";
 import Icon from "../components/research/Icons";
 import { sampleQueries } from "../utils/researchData";
+import { PromptInput } from "../components/ui/PromptInput";
 
-const PIPELINE_STAGES = ["PENDING", "UPLOADED", "EXTRACTING", "CHUNKING", "EMBEDDING", "INDEXING", "COMPLETED"];
-const STAGE_LABELS    = ["Queued", "Uploaded", "Extracting", "Chunking", "Embedding", "Indexing", "Ready"];
-
-function PipelineTracker({ status }) {
-  const idx = PIPELINE_STAGES.indexOf(status === "READY" ? "COMPLETED" : status);
-  if (!status || status === "FAILED") return null;
-  return (
-    <div className="pipeline-tracker" style={{ padding: "10px 0 0" }}>
-      {PIPELINE_STAGES.map((s, i) => (
-        <div
-          key={s}
-          className={`pipeline-step ${i < idx ? "done" : i === idx ? "active" : ""}`}
-        >
-          <div className="pipeline-node">
-            {i < idx ? "✓" : i === idx ? "○" : String(i + 1)}
-          </div>
-          <span className="pipeline-label">{STAGE_LABELS[i]}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
+// ── Citation chip ──────────────────────────────────────────────────────
 function CitationChip({ citation, index, onClick }) {
   return (
-    <button className="citation-chip" onClick={() => onClick(citation)} type="button" title={citation.documentTitle}>
+    <button
+      className="citation-chip"
+      onClick={() => onClick(citation)}
+      type="button"
+      title={citation.documentTitle}
+    >
       <span className="citation-chip-num">{index + 1}</span>
       {citation.documentTitle?.length > 28
         ? citation.documentTitle.slice(0, 28) + "…"
         : citation.documentTitle}
       {citation.score && (
-        <span style={{ opacity: 0.7 }}>· {Math.round(citation.score * 100)}%</span>
+        <span style={{ opacity: 0.6 }}>· {Math.round(citation.score * 100)}%</span>
       )}
     </button>
   );
 }
 
+// ── Single message bubble ──────────────────────────────────────────────
 function Message({ message, onCitationClick, onCopy }) {
   return (
     <div className={`message ${message.role}`}>
@@ -57,7 +41,12 @@ function Message({ message, onCitationClick, onCopy }) {
       {!!message.citations?.length && (
         <div className="citation-strip">
           {message.citations.map((c, i) => (
-            <CitationChip key={`${c.documentTitle}-${i}`} citation={c} index={i} onClick={onCitationClick} />
+            <CitationChip
+              key={`${c.documentTitle}-${i}`}
+              citation={c}
+              index={i}
+              onClick={onCitationClick}
+            />
           ))}
         </div>
       )}
@@ -72,6 +61,58 @@ function Message({ message, onCitationClick, onCopy }) {
   );
 }
 
+// ── History sidebar item ───────────────────────────────────────────────
+function HistoryItem({ item, isActive, onClick, type = "session" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        textAlign: "left",
+        padding: "10px 12px",
+        borderRadius: 8,
+        border: `1px solid ${isActive ? "rgba(6,182,212,0.35)" : "rgba(255,255,255,0.05)"}`,
+        background: isActive ? "rgba(6,182,212,0.07)" : "rgba(255,255,255,0.02)",
+        cursor: "pointer",
+        transition: "all 0.18s",
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+      }}
+      onMouseEnter={e => {
+        if (!isActive) {
+          e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+          e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
+        }
+      }}
+      onMouseLeave={e => {
+        if (!isActive) {
+          e.currentTarget.style.background = "rgba(255,255,255,0.02)";
+          e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)";
+        }
+      }}
+    >
+      <span style={{
+        fontSize: "0.78rem",
+        color: isActive ? "var(--rp-cyan)" : "var(--rp-text)",
+        fontWeight: 500,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}>
+        {typeof item === "string" ? item : item.title || "Untitled session"}
+      </span>
+      {type === "session" && (
+        <span style={{ fontSize: "0.65rem", color: "var(--rp-text-muted)" }}>
+          Click to restore session
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── Main ChatPage ──────────────────────────────────────────────────────
 const ChatPage = () => {
   const { activeCollectionId, navigateTo } = useApp();
   const { collections, papers, error } = useResearchCorpus();
@@ -81,37 +122,46 @@ const ChatPage = () => {
   const [messages, setMessages] = useState([
     {
       role: "assistant",
-      content: "Ask a grounded research question and I'll answer with source citations from your papers. Select a collection and paper to scope the session.",
+      content:
+        "Ask a grounded research question and I'll answer with source citations from your papers. Use the selectors below to scope your search to a collection or specific paper.",
       citations: [],
     },
   ]);
   const [sessionId, setSessionId] = useState("");
   const [sessions, setSessions] = useState([]);
   const [chatError, setChatError] = useState("");
-  const [history, setHistory] = useState(() => JSON.parse(localStorage.getItem("doclens_query_history") || "[]"));
+  const [history, setHistory] = useState(() =>
+    JSON.parse(localStorage.getItem("doclens_query_history") || "[]")
+  );
   const [sending, setSending] = useState(false);
-  const [activeCitation, setActiveCitation] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
+  const [activeHistoryTab, setActiveHistoryTab] = useState("sessions"); // "sessions" | "queries"
+  const [citationPanel, setCitationPanel] = useState(null); // for inline citation view
+  const [activeCitation, setActiveCitation] = useState(null);
   const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    if (!selectedCollectionId && collections[0]?.id) setSelectedCollectionId(collections[0].id);
+    if (!selectedCollectionId && collections[0]?.id)
+      setSelectedCollectionId(collections[0].id);
   }, [collections, selectedCollectionId]);
 
   const collectionPapers = useMemo(
     () => papers.filter(p => !selectedCollectionId || p.collectionId === selectedCollectionId),
-    [papers, selectedCollectionId],
+    [papers, selectedCollectionId]
   );
 
   useEffect(() => {
-    if (!selectedPaperId && collectionPapers[0]?.id) setSelectedPaperId(collectionPapers[0].id);
+    if (!selectedPaperId && collectionPapers[0]?.id)
+      setSelectedPaperId(collectionPapers[0].id);
   }, [collectionPapers, selectedPaperId]);
 
   useEffect(() => {
     if (!selectedCollectionId) return;
     let cancelled = false;
-    queryApi.sessions(selectedCollectionId)
+    queryApi
+      .sessions(selectedCollectionId)
       .then(items => { if (!cancelled) setSessions(items); })
       .catch(() => { if (!cancelled) setSessions([]); });
     return () => { cancelled = true; };
@@ -121,17 +171,18 @@ const ChatPage = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
-  const selectedPaper     = papers.find(p => p.id === selectedPaperId) || collectionPapers[0];
-  const selectedCollection = collections.find(c => c.id === selectedCollectionId);
-  const readyPapers       = collectionPapers.filter(p => ["READY", "COMPLETED"].includes(p.status));
-  const latestAssistant   = [...messages].reverse().find(m => m.role === "assistant");
-  const processingPapers  = collectionPapers.filter(p => !["READY", "COMPLETED", "FAILED"].includes(p.status));
+  const readyPapers = collectionPapers.filter(p => ["READY", "COMPLETED"].includes(p.status));
+  const inspectorOpen = historyOpen || Boolean(citationPanel);
+  const latestAssistant = messages.slice().reverse().find(m => m.role === "assistant");
 
-  const persistHistory = (question) => {
-    const next = [question, ...history.filter(i => i !== question)].slice(0, 6);
+  const persistHistory = question => {
+    const next = [question, ...history.filter(i => i !== question)].slice(0, 20);
     setHistory(next);
     localStorage.setItem("doclens_query_history", JSON.stringify(next));
-    localStorage.setItem("doclens_query_count", String(Number(localStorage.getItem("doclens_query_count") || 0) + 1));
+    localStorage.setItem(
+      "doclens_query_count",
+      String(Number(localStorage.getItem("doclens_query_count") || 0) + 1)
+    );
   };
 
   const sendMessage = async (question = input) => {
@@ -141,12 +192,14 @@ const ChatPage = () => {
     setInput("");
     persistHistory(trimmed);
     setActiveCitation(null);
+    setCitationPanel(null);
     setChatError("");
     setMessages(prev => [...prev, { role: "user", content: trimmed, citations: [] }]);
     setSending(true);
 
     try {
-      if (!selectedCollectionId) throw new Error("Create a collection and upload papers before asking grounded questions.");
+      if (!selectedCollectionId)
+        throw new Error("Create a collection and upload papers before asking grounded questions.");
       const response = await queryApi.ask({
         question: trimmed,
         collectionId: selectedCollectionId,
@@ -158,31 +211,19 @@ const ChatPage = () => {
         throw new Error("DocLens could not produce a citation-backed answer for this question.");
       }
       setSessionId(response.session_id || response.sessionId || sessionId);
-      setMessages(prev => [...prev, { role: "assistant", content: response.content, citations: response.citations || [] }]);
-    } catch (err) {
-      setChatError(err?.message || "The research query could not be completed with source citations.");
-      return;
       setMessages(prev => [
         ...prev,
-        {
-          role: "assistant",
-          content: err?.statusCode === 404 || err?.statusCode === 503
-            ? "The AI query service is not connected yet. Once the semantic service is live, this question will be answered with source citations."
-            : err?.message || "The research query could not be completed.",
-          citations: readyPapers.slice(0, 3).map(p => ({
-            documentTitle: p.title,
-            score: 0.82,
-            chunk: "",
-          })),
-        },
+        { role: "assistant", content: response.content, citations: response.citations || [] },
       ]);
+    } catch (err) {
+      setChatError(err?.message || "The research query could not be completed.");
     } finally {
       setSending(false);
       inputRef.current?.focus();
     }
   };
 
-  const handleCopy = (text) => {
+  const handleCopy = text => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
@@ -192,246 +233,373 @@ const ChatPage = () => {
   const clearSession = () => {
     setMessages([{ role: "assistant", content: "Session cleared. Ask a new research question.", citations: [] }]);
     setActiveCitation(null);
+    setCitationPanel(null);
     setSessionId("");
     setChatError("");
   };
 
-  const loadSession = async (id) => {
+  const loadSession = async id => {
     setChatError("");
     try {
       const session = await queryApi.session(id);
       setSessionId(id);
       setMessages(session.messages || []);
       setActiveCitation(null);
+      setCitationPanel(null);
     } catch (err) {
       setChatError(err?.message || "Unable to load chat session.");
     }
   };
 
+  const handleCitationClick = citation => {
+    setCitationPanel(prev => (prev === citation ? null : citation));
+    setActiveCitation(citation);
+  };
+
   return (
-    <>
-      <PageHeader
-        eyebrow="Research Chat"
-        title="Ask papers with source material in view."
-        description="Citation-aware answers scoped to your research collections. Click a citation chip to inspect the source chunk."
-        actions={
-          <>
-            <ActionButton icon="arrowRight" variant="ghost" onClick={clearSession}>Clear Session</ActionButton>
-          </>
-        }
-      />
+    <div style={{
+      display: "flex",
+      height: "100%",
+      flex: 1,
+      width: "100%",
+      overflow: "hidden",
+      gap: 0,
+      position: "relative",
+    }}>
 
-      <ErrorNotice message={error && "The paper API is unavailable. Research Chat is rendering with fallback states."} />
-      <ErrorNotice message={chatError} />
-
-      <div className="chat-layout">
-        {/* Left: PDF viewer + source panel */}
-        <section className="pdf-viewer">
-          <div className="pdf-toolbar">
-            <div>
-              <strong>{selectedPaper?.title || "No paper selected"}</strong>
-              <span style={{ display: "block", color: "var(--rp-text-muted)", fontSize: "0.78rem", marginTop: 3 }}>
-                {selectedCollection?.name || "Research collection"} / Source view
-              </span>
-            </div>
-            {selectedPaper && <ProcessingStatusBadge status={selectedPaper.status} />}
+      {/* ── LEFT: History Sidebar ───────────────────────────── */}
+      <aside className="chat-inspector-panel" style={{
+        width: inspectorOpen ? 320 : 0,
+        minWidth: inspectorOpen ? 320 : 0,
+        flexShrink: 0,
+        display: "flex",
+        flexDirection: "column",
+        borderLeft: "1px solid var(--rp-border)",
+        background: "rgba(10,12,18,0.98)",
+        overflow: "hidden",
+        transition: "width 0.25s ease, min-width 0.25s ease",
+        order: 2,
+      }}>
+        {/* Sidebar header */}
+        <div style={{
+          padding: "16px",
+          borderBottom: "1px solid var(--rp-border)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: "0.72rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--rp-text-muted)" }}>
+            History
+          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              type="button"
+              onClick={clearSession}
+              style={{ fontSize: "0.65rem", color: "var(--rp-text-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--rp-mono)" }}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => { setHistoryOpen(false); setCitationPanel(null); }}
+              aria-label="Close chat inspector"
+              title="Close panel"
+              style={{ color: "var(--rp-text-muted)", background: "none", border: "none", cursor: "pointer", fontSize: "0.9rem", lineHeight: 1 }}
+            >
+              ×
+            </button>
           </div>
+        </div>
 
-          {selectedPaper ? (
-            <>
-              {processingPapers.some(p => p.id === selectedPaper.id) && (
-                <PipelineTracker status={selectedPaper.status} />
-              )}
-              {activeCitation ? (
-                <div className="pdf-page">
-                  <h2>{selectedPaper.title}</h2>
-                  <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(110,231,249,0.1)", borderRadius: 6, border: "1px solid rgba(110,231,249,0.25)", fontSize: "0.78rem", color: "var(--rp-cyan)", fontFamily: "var(--rp-mono)" }}>
-                    Source citation from: {activeCitation.documentTitle}
-                    {activeCitation.pageNumber ? ` / page ${activeCitation.pageNumber}` : ""}
-                    {activeCitation.chunkIndex !== undefined ? ` / chunk ${activeCitation.chunkIndex}` : ""}
-                  </div>
-                  <p style={{ fontSize: "0.84rem", lineHeight: 1.65, color: "#152029" }}>{activeCitation.chunk}</p>
-                  <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontSize: "0.72rem", color: "#5c7080" }}>
-                    <span>Semantic relevance: {Math.round((activeCitation.score || 0) * 100)}%</span>
-                    {activeCitation.documentId && (
-                      <button
-                        type="button"
-                        onClick={() => documentsApi.download(activeCitation.documentId, `${activeCitation.documentTitle || "paper"}.pdf`)}
-                        style={{ border: "1px solid rgba(21,32,41,0.15)", borderRadius: 5, background: "rgba(255,255,255,0.6)", color: "#152029", padding: "4px 8px", cursor: "pointer" }}
-                      >
-                        Open PDF
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ position: "relative", height: "100%", minHeight: 300, display: "flex", flexDirection: "column", gap: 14, padding: "30px 40px", background: "rgba(255, 255, 255, 0.02)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.04)", overflow: "hidden" }}>
-                  <div style={{ width: "35%", height: 22, background: "rgba(255, 255, 255, 0.06)", borderRadius: 4, marginBottom: 8 }} />
-                  <div style={{ width: "85%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3 }} />
-                  <div style={{ width: "92%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3 }} />
-                  <div style={{ width: "78%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3 }} />
-                  <div style={{ width: "88%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3, marginTop: 12 }} />
-                  <div style={{ width: "95%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3 }} />
-                  <div style={{ width: "65%", height: 12, background: "rgba(255, 255, 255, 0.03)", borderRadius: 3 }} />
+        {/* Tab switcher */}
+        <div style={{
+          display: "flex",
+          borderBottom: "1px solid var(--rp-border)",
+          flexShrink: 0,
+        }}>
+          {["sessions", "queries"].map(tab => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setActiveHistoryTab(tab)}
+              style={{
+                flex: 1,
+                padding: "9px 4px",
+                border: "none",
+                borderBottom: `2px solid ${activeHistoryTab === tab ? "var(--rp-cyan)" : "transparent"}`,
+                background: "none",
+                color: activeHistoryTab === tab ? "var(--rp-cyan)" : "var(--rp-text-muted)",
+                fontSize: "0.65rem",
+                fontFamily: "var(--rp-mono)",
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+                transition: "color 0.15s",
+              }}
+            >
+              {tab}
+            </button>
+          ))}
+        </div>
 
-                  {/* Gradient overlay for smooth fade out */}
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, transparent 10%, rgba(17, 24, 32, 0.8) 50%, rgba(17, 24, 32, 1) 90%)", display: "grid", placeItems: "center", padding: "0 20px" }}>
-                    <EmptyState
-                      compact icon="citation"
-                      title="No source viewed"
-                      description="Ask a question and click on a citation chip to read the source paragraph directly from the document."
-                    />
-                  </div>
-                </div>
-              )}
-            </>
+        {/* Sidebar content */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {activeHistoryTab === "sessions" ? (
+            sessions.length ? (
+              sessions.slice(0, 20).map(item => (
+                <HistoryItem
+                  key={item.id}
+                  item={item}
+                  isActive={item.id === sessionId}
+                  onClick={() => loadSession(item.id)}
+                  type="session"
+                />
+              ))
+            ) : (
+              <div style={{ padding: "24px 8px", textAlign: "center", color: "var(--rp-text-muted)", fontSize: "0.75rem" }}>
+                No sessions yet. Ask a question to start one.
+              </div>
+            )
           ) : (
-            <div style={{ position: "relative", height: "100%", minHeight: 400, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px", background: "rgba(255, 255, 255, 0.02)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.04)" }}>
-               <Icon name="chat" size={32} style={{ color: "var(--rp-cyan)", opacity: 0.8, marginBottom: 16 }} />
-               <h3 style={{ margin: "0 0 8px 0", fontSize: "1.1rem" }}>Start a Research Conversation</h3>
-               <p style={{ color: "var(--rp-text-soft)", textAlign: "center", maxWidth: 300, marginBottom: 24, fontSize: "0.85rem", lineHeight: 1.5 }}>
-                 Select a paper to view its source text, or ask a general question across your collection.
-               </p>
-               <div style={{ display: "flex", flexDirection: "column", gap: 10, width: "100%", maxWidth: 360 }}>
-                 {[
-                   "What is the main contribution?",
-                   "What methodology was used?",
-                   "What datasets were used?",
-                   "What limitations exist?",
-                   "What future work is suggested?",
-                 ].map(q => (
-                   <button
-                     key={q}
-                     onClick={() => sendMessage(q)}
-                     style={{ textAlign: "left", padding: "10px 14px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 6, color: "var(--rp-text)", fontSize: "0.8rem", cursor: "pointer", transition: "all 0.2s" }}
-                     onMouseOver={e => { e.target.style.background = "rgba(110,231,249,0.08)"; e.target.style.borderColor = "var(--rp-cyan)"; }}
-                     onMouseOut={e => { e.target.style.background = "rgba(255,255,255,0.03)"; e.target.style.borderColor = "rgba(255,255,255,0.08)"; }}
-                   >
-                     {q}
-                   </button>
-                 ))}
-               </div>
+            (history.length ? history : sampleQueries.slice(0, 6)).map((q, i) => (
+              <HistoryItem
+                key={i}
+                item={q}
+                isActive={false}
+                onClick={() => sendMessage(q)}
+                type="query"
+              />
+            ))
+          )}
+        </div>
+
+        {/* Citation preview at the bottom of sidebar */}
+        {citationPanel && (
+          <div style={{
+            borderTop: "1px solid var(--rp-border)",
+            padding: "14px",
+            flexShrink: 0,
+            maxHeight: 220,
+            overflowY: "auto",
+          }}>
+            <div style={{ fontSize: "0.6rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--rp-cyan)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>Source Citation</span>
+              <button type="button" onClick={() => setCitationPanel(null)} style={{ background: "none", border: "none", color: "var(--rp-text-muted)", cursor: "pointer", fontSize: "0.8rem" }}>✕</button>
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "var(--rp-text-soft)", fontStyle: "italic", marginBottom: 6 }}>
+              {citationPanel.documentTitle}
+              {citationPanel.pageNumber ? ` · p.${citationPanel.pageNumber}` : ""}
+            </div>
+            <p style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--rp-text)", margin: 0 }}>
+              {citationPanel.chunk_text || citationPanel.chunk || citationPanel.chunkText || "Excerpt not available."}
+            </p>
+            <div style={{ marginTop: 8, fontSize: "0.65rem", color: "var(--rp-text-muted)" }}>
+              Relevance: {Math.round((citationPanel.score || 0) * 100)}%
+            </div>
+            {citationPanel.documentId && (
+              <button
+                type="button"
+                onClick={() => documentsApi.download(citationPanel.documentId, `${citationPanel.documentTitle || "paper"}.pdf`)}
+                style={{ marginTop: 8, padding: "5px 10px", border: "1px solid var(--rp-border)", borderRadius: 5, background: "rgba(6,182,212,0.08)", color: "var(--rp-cyan)", cursor: "pointer", fontSize: "0.7rem", width: "100%" }}
+              >
+                Download PDF
+              </button>
+            )}
+          </div>
+        )}
+      </aside>
+
+      {/* ── MAIN: Full Chat Area ────────────────────────────── */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        {/* Sleek Tool Bar instead of duplicate header */}
+        <div style={{
+          padding: "8px 20px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 12,
+          flexShrink: 0,
+        }}>
+          {latestAssistant?.citations?.length > 0 && (
+            <span className="citation-badge">
+              <Icon name="citation" size={13} />
+              {latestAssistant.citations.length} citations
+            </span>
+          )}
+          <ActionButton icon="arrowRight" variant="ghost" onClick={clearSession}>
+            New Session
+          </ActionButton>
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(o => !o)}
+            title={historyOpen ? "Hide History" : "Show History"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 32, height: 32, borderRadius: 7,
+              border: "1px solid var(--rp-border)",
+              background: historyOpen ? "rgba(6,182,212,0.08)" : "transparent",
+              color: historyOpen ? "var(--rp-cyan)" : "var(--rp-text-muted)",
+              cursor: "pointer",
+              transition: "all 0.18s",
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="9" y1="3" x2="9" y2="21"/>
+            </svg>
+          </button>
+        </div>
+
+        {/* Error notices */}
+        {(error || chatError) && (
+          <div style={{ flexShrink: 0, padding: "0 20px" }}>
+            <ErrorNotice message={error && "Paper API unavailable — showing fallback states."} />
+            <ErrorNotice message={chatError} />
+          </div>
+        )}
+
+        {/* Messages area */}
+        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", padding: "10px 0" }}>
+          <div style={{ flex: 1, maxWidth: 860, width: "100%", margin: "0 auto", padding: "10px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+          {!collections.length && (
+            <EmptyState compact icon="collections"
+              title="Create a collection to start"
+              description="Research Chat needs a collection so answers can be scoped to your papers."
+              action={<ActionButton icon="collections" onClick={() => navigateTo(PAGES.COLLECTIONS)}>Open Collections</ActionButton>}
+            />
+          )}
+
+          {/* Suggested questions when session is fresh */}
+          {messages.length === 1 && collections.length > 0 && (
+            <div style={{ maxWidth: 560, margin: "0 auto 24px", width: "100%" }}>
+              <p style={{ fontSize: "0.7rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--rp-text-muted)", marginBottom: 12 }}>
+                Suggested questions
+              </p>
+              <div className="chat-suggestion-grid">
+                {[
+                  "What is the main contribution?",
+                  "What methodology was used?",
+                  "What datasets were evaluated on?",
+                  "What are the key limitations?",
+                  "What future work is suggested?",
+                  "How does this compare to prior work?",
+                ].map(q => (
+                  <button
+                    key={q}
+                    type="button"
+                    onClick={() => sendMessage(q)}
+                    style={{
+                      textAlign: "left", padding: "10px 14px",
+                      background: "rgba(255,255,255,0.025)",
+                      border: "1px solid rgba(255,255,255,0.07)",
+                      borderRadius: 8, color: "var(--rp-text-soft)",
+                      fontSize: "0.78rem", cursor: "pointer",
+                      transition: "all 0.18s", lineHeight: 1.4,
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(6,182,212,0.07)"; e.currentTarget.style.borderColor = "rgba(6,182,212,0.25)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.025)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"; }}
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          <div className="source-panel">
+          {messages.map((m, i) => (
+            <Message key={i} message={m} onCitationClick={handleCitationClick} onCopy={handleCopy} />
+          ))}
+
+          {sending && (
+            <div className="message">
+              <span>DocLens AI</span>
+              <p style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{
+                  display: "inline-block", width: 14, height: 14,
+                  border: "2px solid var(--rp-border)",
+                  borderTopColor: "var(--rp-cyan)",
+                  borderRadius: "50%",
+                  animation: "rp-spin 0.7s linear infinite",
+                  flexShrink: 0,
+                }} />
+                Reading source chunks and preparing a citation-aware response…
+              </p>
+            </div>
+          )}
+
+          {copied && (
+            <div style={{ textAlign: "center", padding: "4px 0", color: "var(--rp-green)", fontFamily: "var(--rp-mono)", fontSize: "0.68rem" }}>
+              Copied to clipboard ✓
+            </div>
+          )}
+
+          <div ref={bottomRef} style={{ height: 20 }} />
+        </div>
+        </div>
+
+        {/* ── Bottom: PromptInput with inline paper selector ── */}
+        <div style={{
+          flexShrink: 0,
+          padding: "16px 20px 24px",
+        }}>
+          <div style={{ maxWidth: 860, width: "100%", margin: "0 auto" }}>
+          {/* Collection + Paper picker row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: "0.6rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--rp-text-muted)", flexShrink: 0 }}>
+              Scope:
+            </span>
             <select
               className="field-control"
               value={selectedCollectionId}
               onChange={e => { setSelectedCollectionId(e.target.value); setSelectedPaperId(""); }}
+              style={{ padding: "5px 10px", fontSize: "0.75rem", height: "auto", flex: "0 1 200px", minWidth: 120 }}
             >
-              {!collections.length && <option value="">No collections yet</option>}
+              {!collections.length && <option value="">No collections</option>}
               {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
+
             <select
               className="field-control"
               value={selectedPaperId}
               onChange={e => setSelectedPaperId(e.target.value)}
+              style={{ padding: "5px 10px", fontSize: "0.75rem", height: "auto", flex: "0 1 260px", minWidth: 120 }}
             >
-              {!collectionPapers.length && <option value="">No papers in collection</option>}
-              {collectionPapers.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+              <option value="">All papers in collection</option>
+              {collectionPapers.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.title.length > 45 ? p.title.slice(0, 45) + "…" : p.title}
+                </option>
+              ))}
             </select>
-            <div className="source-card">
-              <strong>Source References</strong>
-              <span>{readyPapers.length} indexed / {collectionPapers.length} total papers in collection</span>
-            </div>
-            {!!sessions.length && (
-              <div className="source-card">
-                <strong>Recent Chat Sessions</strong>
-                {sessions.slice(0, 4).map(item => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => loadSession(item.id)}
-                    style={{ marginTop: 8, width: "100%", border: 0, background: "rgba(255,255,255,0.04)", color: "var(--rp-text-soft)", borderRadius: 6, padding: "7px 8px", textAlign: "left", cursor: "pointer", fontSize: "0.75rem" }}
-                  >
-                    {item.title || "Untitled session"}
-                  </button>
-                ))}
-              </div>
-            )}
-            {latestAssistant?.citations?.slice(0, 4).map((c, i) => (
-              <button
-                key={`${c.documentTitle}-${i}`}
-                className="source-card"
-                style={{ width: "100%", textAlign: "left", cursor: "pointer", border: activeCitation === c ? "1px solid rgba(110,231,249,0.35)" : undefined }}
-                onClick={() => setActiveCitation(activeCitation === c ? null : c)}
-                type="button"
-              >
-                <strong>[{i + 1}] {c.documentTitle?.length > 34 ? c.documentTitle.slice(0, 34) + "…" : c.documentTitle}</strong>
-                <span>{Math.round((c.score || 0) * 100)}% semantic match · Click to inspect</span>
-              </button>
-            ))}
-          </div>
-        </section>
 
-        {/* Right: Chat interface */}
-        <section className="chat-interface">
-          <div className="chat-toolbar">
-            <div>
-              <strong>Research Session</strong>
-              <span style={{ display: "block", color: "var(--rp-text-muted)", fontSize: "0.78rem", marginTop: 3 }}>
-                Citation-aware answers · semantic recall · {messages.filter(m => m.role === "user").length} questions this session
-              </span>
-            </div>
-            <span className="citation-badge">
-              <Icon name="citation" size={13} />
-              {latestAssistant?.citations?.length || 0} citations
+            {/* Status badges */}
+            <span style={{ fontSize: "0.65rem", color: "var(--rp-text-muted)", flexShrink: 0 }}>
+              {readyPapers.length} / {collectionPapers.length} indexed
             </span>
           </div>
 
-          <div className="chat-messages">
-            {!collections.length && (
-              <EmptyState compact icon="collections"
-                title="Create a collection to start"
-                description="Research Chat needs a collection so answers can be scoped to papers."
-                action={<ActionButton icon="collections" onClick={() => navigateTo(PAGES.COLLECTIONS)}>Open Collections</ActionButton>}
-              />
-            )}
-            {messages.map((m, i) => (
-              <Message key={i} message={m} onCitationClick={setActiveCitation} onCopy={handleCopy} />
-            ))}
-            {sending && (
-              <div className="message">
-                <span>DocLens AI</span>
-                <p style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid var(--rp-border)", borderTopColor: "var(--rp-cyan)", borderRadius: "50%", animation: "rp-spin 0.7s linear infinite" }} />
-                  Reading source chunks and preparing a citation-aware response…
-                </p>
-              </div>
-            )}
-            {copied && (
-              <div style={{ textAlign: "center", padding: "4px 0", color: "var(--rp-green)", fontFamily: "var(--rp-mono)", fontSize: "0.68rem" }}>
-                Copied to clipboard ✓
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
-
-          <div>
-            <div className="source-panel">
-              <strong style={{ fontSize: "0.82rem" }}>Query History</strong>
-              {(history.length ? history : sampleQueries.slice(0, 3)).map(item => (
-                <button className="query-history-item" key={item} onClick={() => sendMessage(item)} type="button">
-                  <strong>{item}</strong>
-                  <span>Run in this research session</span>
-                </button>
-              ))}
-            </div>
-            <form className="chat-composer" onSubmit={e => { e.preventDefault(); sendMessage(); }}>
-              <input
-                ref={inputRef}
-                className="field-control"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                placeholder="Ask about methods, datasets, findings, or citations…"
-              />
-              <ActionButton icon="arrowRight" type="submit" disabled={sending || !input.trim()}>Ask</ActionButton>
-            </form>
-          </div>
-        </section>
+          {/* Prompt input */}
+          <PromptInput
+            ref={inputRef}
+            value={input}
+            onChange={e => {
+              setInput(e.target.value);
+              localStorage.setItem("doclens_last_query", e.target.value);
+            }}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+            }}
+            onSubmit={() => sendMessage()}
+            isLoading={sending}
+            placeholder="Ask about methods, datasets, findings, or citations… (Enter to send, Shift+Enter for newline)"
+            credits={undefined}
+            onUpgrade={() => {}}
+          />
+        </div>
       </div>
-    </>
+    </div>
+  </div>
   );
 };
 

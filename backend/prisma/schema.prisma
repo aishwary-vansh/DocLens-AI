@@ -2,11 +2,13 @@
 // DocLens Knowledge Graph-Driven Research Intelligence Platform
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector]
 }
 
 model User {
@@ -103,13 +105,17 @@ model DocumentChunk {
   vectorId    String?
   tokenCount  Int?
   contentHash String?
+  metadata    Json?
   createdAt   DateTime @default(now())
+
+  // PgVector — 1024 dims (jina-embeddings-v5-text-small). Managed via raw migration SQL.
+  embedding   Unsupported("vector(1024)")?
 
   documentId String
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   citations                Citation[]
-  embedding                EmbeddingMetadata?
+  embeddingMetadata        EmbeddingMetadata?
   evidenceForRelationships Relationship[]     @relation("RelationshipEvidence")
 
   @@unique([documentId, chunkIndex])
@@ -123,7 +129,7 @@ model EmbeddingMetadata {
   modelName        String
   dimensions       Int
   similarityMetric String   @default("cosine")
-  vectorStore      String   @default("faiss")
+  vectorStore      String   @default("pgvector")
   vectorId         String   @unique
   collectionId     String
   createdAt        DateTime @default(now())

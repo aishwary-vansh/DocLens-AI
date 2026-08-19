@@ -8,9 +8,6 @@ export const PAGES = {
   CHAT: "chat",
   LITERATURE_REVIEWS: "literature-reviews",
   COMPARE_PAPERS: "compare-papers",
-  NOTES: "notes",
-  READING_LIST: "reading-list",
-  ANALYTICS: "analytics",
   SETTINGS: "settings",
   COLLECTION: "collection",
   NOT_FOUND: "not-found",
@@ -23,9 +20,6 @@ const SIDEBAR_ROUTES = {
   [PAGES.CHAT]: "/research-chat",
   [PAGES.LITERATURE_REVIEWS]: "/literature-reviews",
   [PAGES.COMPARE_PAPERS]: "/compare-papers",
-  [PAGES.NOTES]: "/notes",
-  [PAGES.READING_LIST]: "/reading-list",
-  [PAGES.ANALYTICS]: "/analytics",
   [PAGES.SETTINGS]: "/settings",
 };
 
@@ -54,18 +48,6 @@ const routeMeta = {
     title: "Compare Papers",
     subtitle: "Analyze and synthesize differences across multiple documents side-by-side",
   },
-  [PAGES.NOTES]: {
-    title: "Research Notes",
-    subtitle: "Capture and organize domain knowledge, insights, and summaries",
-  },
-  [PAGES.READING_LIST]: {
-    title: "Reading List",
-    subtitle: "Track your reading progress across all research documents",
-  },
-  [PAGES.ANALYTICS]: {
-    title: "Research Analytics",
-    subtitle: "Track library growth and research velocity",
-  },
   [PAGES.SETTINGS]: {
     title: "Settings",
     subtitle: "Research workspace preferences and account configuration",
@@ -91,9 +73,6 @@ function parseHash() {
   if (route === "research-chat") return { page: PAGES.CHAT, collectionId: id || null };
   if (route === "literature-reviews") return { page: PAGES.LITERATURE_REVIEWS };
   if (route === "compare-papers") return { page: PAGES.COMPARE_PAPERS };
-  if (route === "notes") return { page: PAGES.NOTES };
-  if (route === "reading-list") return { page: PAGES.READING_LIST };
-  if (route === "analytics") return { page: PAGES.ANALYTICS };
   if (route === "settings") return { page: PAGES.SETTINGS };
 
   return { page: PAGES.NOT_FOUND };
@@ -112,6 +91,8 @@ export const AppProvider = ({ children }) => {
   const [activePage, setActivePageState] = useState(initial.page);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(null);
   const [activeCollectionId, setActiveCollectionId] = useState(initial.collectionId || null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const toggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
 
   useEffect(() => {
     const onHashChange = () => {
@@ -149,8 +130,10 @@ export const AppProvider = ({ children }) => {
       navigateTo,
       routeMeta,
       PAGES,
+      sidebarCollapsed,
+      toggleSidebar,
     }),
-    [activeCollectionId, activePage, activeWorkspaceId, navigateTo, setActivePage],
+    [activeCollectionId, activePage, activeWorkspaceId, navigateTo, setActivePage, sidebarCollapsed, toggleSidebar],
   );
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -76,6 +76,12 @@ export class QueryController {
     return this.queryService.summarise(body.documentId, user.id);
   }
 
+  @Post('review')
+  @ApiOperation({ summary: 'AI Reviewer — structured peer-review style analysis of a paper' })
+  review(@Body() body: { documentId: string }, @CurrentUser() user: any) {
+    return this.queryService.reviewDocument(body.documentId, user.id);
+  }
+
   @Post('compare')
   @ApiOperation({ summary: 'Create and store a citation-backed paper comparison' })
   compare(

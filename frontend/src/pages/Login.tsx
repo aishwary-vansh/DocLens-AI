@@ -1,25 +1,9 @@
 // src/pages/Login.tsx
-// Minimal, centered dark login — clean card, no copy-paste from landing.
 import { useState, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import BgCanvas from './landing/BgCanvas';
 
 type Mode = 'login' | 'register';
-
-const T = {
-  bg:      '#080808',
-  bg1:     '#0f0f0f',
-  bg2:     '#141414',
-  accent:  '#dedbd2',
-  dim:     'rgba(222,219,210,0.65)',
-  muted:   'rgba(222,219,210,0.38)',
-  faint:   'rgba(222,219,210,0.12)',
-  border:  'rgba(222,219,210,0.08)',
-  borderH: 'rgba(222,219,210,0.24)',
-};
-
-const mono: React.CSSProperties = { fontFamily: "'DM Mono', monospace" };
-const syne: React.CSSProperties = { fontFamily: "'Syne', sans-serif" };
 
 const Login = () => {
   const { login, register, error, clearError } = useAuth();
@@ -45,142 +29,356 @@ const Login = () => {
   };
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0,
-      background: T.bg, color: T.accent,
-      fontFamily: "'DM Mono', monospace",
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'none', overflow: 'hidden',
-    }}>
+    <div className="login-root">
       <BgCanvas />
 
-      {/* ── Card ── */}
-      <div style={{
-        position: 'relative', zIndex: 1,
-        width: '100%', maxWidth: '420px',
-        margin: '0 1.5rem',
-        background: T.bg1,
-        border: `1px solid ${T.borderH}`,
-        borderRadius: '20px',
-        padding: '2.8rem 2.5rem',
-        boxShadow: '0 0 60px rgba(222,219,210,0.04), 0 24px 64px rgba(0,0,0,0.6)',
-      }}>
+      {/* ── Ambient glow orbs ── */}
+      <div className="login-orb login-orb-1" />
+      <div className="login-orb login-orb-2" />
 
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '2.2rem' }}>
-          <div style={{
-            width: '28px', height: '28px',
-            border: `1.5px solid ${T.dim}`, borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            <div style={{ width: '9px', height: '9px', border: `1.5px solid ${T.accent}`, borderRadius: '50%' }} />
+      {/* ── Card ── */}
+      <div className="login-card">
+
+        {/* Brand */}
+        <div className="login-brand">
+          <img src="/logo.png" alt="DocLens Logo" style={{ width: 80, height: "auto", objectFit: "contain", flexShrink: 0, borderRadius: 12 }} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span className="login-logo-text">DocLens</span>
+            <span className="login-logo-badge" style={{ alignSelf: 'flex-start' }}>AI</span>
           </div>
-          <span style={{ ...syne, fontWeight: 700, fontSize: '1rem',
-            letterSpacing: '0.2em', textTransform: 'uppercase' }}>
-            DocLens
-          </span>
         </div>
 
-        {/* Title */}
-        <div style={{ marginBottom: '2rem' }}>
-          <div style={{ ...mono, fontSize: '0.58rem', letterSpacing: '0.18em',
-            textTransform: 'uppercase', color: T.muted, marginBottom: '0.5rem' }}>
-            {mode === 'login' ? '// Sign in to continue' : '// Create your account'}
-          </div>
+        {/* Headline */}
+        <div className="login-headline">
+          <h1 className="login-title">
+            {mode === 'login' ? 'Welcome back' : 'Get started'}
+          </h1>
+          <p className="login-subtitle">
+            {mode === 'login'
+              ? 'Sign in to your research workspace'
+              : 'Create your research workspace'}
+          </p>
         </div>
 
         {/* Mode tabs */}
-        <div style={{ display: 'flex', gap: '4px', background: T.bg, borderRadius: '10px',
-          padding: '4px', marginBottom: '1.8rem', border: `1px solid ${T.border}` }}>
+        <div className="login-tabs">
           {(['login', 'register'] as Mode[]).map(m => (
-            <button key={m} onClick={() => { setMode(m); reset(); }} style={{
-              flex: 1, padding: '0.5rem',
-              background: mode === m ? T.bg1 : 'transparent',
-              border: `1px solid ${mode === m ? T.borderH : 'transparent'}`,
-              borderRadius: '8px',
-              ...mono, fontSize: '0.58rem', fontWeight: 600,
-              letterSpacing: '0.12em', textTransform: 'uppercase',
-              color: mode === m ? T.accent : T.muted,
-              cursor: 'none', transition: 'all 0.15s',
-            }}>
+            <button
+              key={m}
+              onClick={() => { setMode(m); reset(); }}
+              className={`login-tab${mode === m ? ' active' : ''}`}
+            >
               {m === 'login' ? 'Sign In' : 'Register'}
             </button>
           ))}
         </div>
 
         {/* Form */}
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-
+        <form onSubmit={submit} className="login-form">
           {mode === 'register' && (
             <Field label="Full Name" type="text" value={name}
               onChange={v => { setName(v); reset(); }} placeholder="Your name" />
           )}
-
           <Field label="Email" type="email" value={email}
             onChange={v => { setEmail(v); reset(); }} placeholder="you@research.ai" />
-
           <Field label="Password" type="password" value={pass}
             onChange={v => { setPass(v); reset(); }} placeholder="••••••••" />
 
           {(local || error) && (
-            <div style={{
-              ...mono, fontSize: '0.6rem', color: '#ef4444',
-              background: 'rgba(239,68,68,0.06)',
-              border: '1px solid rgba(239,68,68,0.18)',
-              padding: '0.55rem 0.75rem', letterSpacing: '0.03em',
-            }}>
-              ⚠ {local || error}
+            <div className="login-error">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              {local || error}
             </div>
           )}
 
-          <button type="submit" disabled={busy} style={{
-            marginTop: '0.4rem',
-            background: busy ? T.faint : T.accent,
-            color: busy ? T.muted : T.bg,
-            ...mono, fontSize: '0.68rem', fontWeight: 600,
-            letterSpacing: '0.1em', textTransform: 'uppercase',
-            padding: '0.82rem',
-            border: `1px solid ${T.border}`,
-            borderRadius: '10px',
-            cursor: 'none',
-            transition: 'opacity 0.18s, transform 0.18s',
-          }}
-            onMouseEnter={e => { if (!busy) { e.currentTarget.style.opacity = '0.85'; e.currentTarget.style.transform = 'translateY(-1px)'; } }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = ''; }}
-          >
-            {busy ? 'Please wait…' : mode === 'login' ? 'Sign In →' : 'Create Account →'}
+          <button type="submit" disabled={busy} className={`login-submit${busy ? ' busy' : ''}`}>
+            {busy ? (
+              <>
+                <span className="login-spinner" />
+                Please wait…
+              </>
+            ) : (
+              <>
+                {mode === 'login' ? 'Sign In' : 'Create Account'}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+              </>
+            )}
           </button>
         </form>
 
         {/* Demo hint */}
-        <div style={{
-          marginTop: '1.6rem',
-          padding: '0.9rem 1rem',
-          background: T.bg,
-          border: `1px solid ${T.border}`,
-          borderRadius: '10px',
-        }}>
-          <div style={{ ...mono, fontSize: '0.5rem', letterSpacing: '0.16em',
-            textTransform: 'uppercase', color: T.muted, marginBottom: '0.45rem', fontWeight: 600 }}>
-            // Demo credentials
+        <div className="login-demo">
+          <div className="login-demo-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+            </svg>
+            Demo Access
           </div>
-          <div style={{ ...mono, fontSize: '0.6rem', color: T.muted }}>
-            <span style={{ color: T.accent }}>admin@doclens.ai</span> / Admin@1234
+          <div className="login-demo-creds">
+            <span className="login-demo-email">admin@doclens.ai</span>
+            <span className="login-demo-sep">/</span>
+            <span>Admin@1234</span>
           </div>
         </div>
       </div>
 
       {/* Bottom label */}
-      <div style={{
-        position: 'fixed', bottom: '1.5rem', left: 0, right: 0,
-        textAlign: 'center', zIndex: 1,
-        ...mono, fontSize: '0.52rem', color: T.muted,
-        letterSpacing: '0.1em', textTransform: 'uppercase', opacity: 0.4,
-      }}>
-        © Aishwary Vansh 2026 · Phase 1 · Foundation
+      <div className="login-footer">
+        © Aishwary Vansh 2026 · DocLens AI · Research Intelligence Platform
       </div>
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        .login-root {
+          position: fixed; inset: 0;
+          background: #050507;
+          color: #eafaf1;
+          font-family: 'Inter', sans-serif;
+          display: flex; align-items: center; justify-content: center;
+          overflow: hidden;
+        }
+
+        .login-orb {
+          position: absolute;
+          border-radius: 50%;
+          pointer-events: none;
+          filter: blur(120px);
+        }
+        .login-orb-1 {
+          width: 500px; height: 500px;
+          top: -100px; left: -100px;
+          background: radial-gradient(circle, rgba(6,182,212,0.12) 0%, transparent 70%);
+        }
+        .login-orb-2 {
+          width: 400px; height: 400px;
+          bottom: -80px; right: -80px;
+          background: radial-gradient(circle, rgba(16,185,129,0.10) 0%, transparent 70%);
+        }
+
+        .login-card {
+          position: relative; z-index: 1;
+          width: 100%; max-width: 440px;
+          margin: 0 1.5rem;
+          background: rgba(9, 9, 15, 0.85);
+          border: 1px solid rgba(16, 185, 129, 0.18);
+          border-radius: 20px;
+          padding: 2.8rem 2.5rem;
+          box-shadow:
+            0 0 0 1px rgba(6,182,212,0.06),
+            0 32px 80px rgba(0,0,0,0.7),
+            inset 0 1px 0 rgba(255,255,255,0.04);
+          backdrop-filter: blur(24px);
+        }
+
+        /* Brand */
+        .login-brand {
+          display: flex; align-items: center; gap: 0.65rem;
+          margin-bottom: 2rem;
+        }
+        .login-logo-mark {
+          width: 30px; height: 30px;
+          border: 1.5px solid rgba(6,182,212,0.5);
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(6,182,212,0.06);
+          flex-shrink: 0;
+        }
+        .login-logo-inner {
+          width: 10px; height: 10px;
+          border: 1.5px solid #06b6d4;
+          border-radius: 50%;
+          background: rgba(6,182,212,0.25);
+        }
+        .login-logo-text {
+          font-family: 'Outfit', sans-serif;
+          font-weight: 800; font-size: 1rem;
+          letter-spacing: 0.14em; text-transform: uppercase;
+          background: linear-gradient(135deg, #cffafe, #34d399);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+        .login-logo-badge {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.52rem; font-weight: 700;
+          letter-spacing: 0.12em; text-transform: uppercase;
+          color: #06b6d4;
+          border: 1px solid rgba(6,182,212,0.35);
+          background: rgba(6,182,212,0.08);
+          padding: 0.18rem 0.45rem;
+          border-radius: 4px;
+        }
+
+        /* Headline */
+        .login-headline { margin-bottom: 1.8rem; }
+        .login-title {
+          font-family: 'Outfit', sans-serif;
+          font-weight: 800; font-size: 1.75rem;
+          letter-spacing: -0.03em; line-height: 1.1;
+          background: linear-gradient(135deg, #cffafe 0%, #34d399 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          margin: 0 0 0.4rem;
+        }
+        .login-subtitle {
+          font-size: 0.8rem; line-height: 1.6;
+          color: rgba(234,250,241,0.48);
+          margin: 0;
+          font-family: 'Inter', sans-serif;
+        }
+
+        /* Tabs */
+        .login-tabs {
+          display: flex; gap: 4px;
+          background: rgba(0,0,0,0.35);
+          border: 1px solid rgba(16,185,129,0.12);
+          border-radius: 10px; padding: 4px;
+          margin-bottom: 1.6rem;
+        }
+        .login-tab {
+          flex: 1; padding: 0.52rem;
+          background: transparent;
+          border: 1px solid transparent;
+          border-radius: 7px;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.72rem; font-weight: 600;
+          letter-spacing: 0.04em; text-transform: uppercase;
+          color: rgba(234,250,241,0.38);
+          cursor: pointer;
+          transition: all 0.18s ease;
+        }
+        .login-tab.active {
+          background: rgba(6,182,212,0.10);
+          border-color: rgba(6,182,212,0.28);
+          color: #cffafe;
+        }
+        .login-tab:hover:not(.active) {
+          color: rgba(234,250,241,0.65);
+          background: rgba(255,255,255,0.04);
+        }
+
+        /* Form */
+        .login-form {
+          display: flex; flex-direction: column; gap: 1rem;
+        }
+        .login-field {
+          display: flex; flex-direction: column; gap: 0.4rem;
+        }
+        .login-label {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.62rem; letter-spacing: 0.14em;
+          text-transform: uppercase; font-weight: 600;
+          color: rgba(234,250,241,0.42);
+        }
+        .login-input {
+          font-family: 'Inter', sans-serif;
+          font-size: 0.875rem; letter-spacing: 0.01em;
+          padding: 0.72rem 0.9rem;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(16,185,129,0.15);
+          border-radius: 9px;
+          color: #eafaf1;
+          outline: none;
+          transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
+          width: 100%;
+        }
+        .login-input::placeholder {
+          color: rgba(234,250,241,0.22);
+        }
+        .login-input:focus {
+          border-color: rgba(6,182,212,0.45);
+          background: rgba(6,182,212,0.04);
+          box-shadow: 0 0 0 3px rgba(6,182,212,0.08);
+        }
+
+        /* Error */
+        .login-error {
+          display: flex; align-items: center; gap: 0.5rem;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.75rem; color: #f87171;
+          background: rgba(239,68,68,0.06);
+          border: 1px solid rgba(239,68,68,0.18);
+          border-radius: 8px;
+          padding: 0.6rem 0.85rem;
+          line-height: 1.5;
+        }
+
+        /* Submit */
+        .login-submit {
+          display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+          margin-top: 0.3rem;
+          padding: 0.82rem;
+          background: linear-gradient(135deg, #06b6d4, #10b981);
+          color: #fff;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.82rem; font-weight: 700;
+          letter-spacing: 0.04em;
+          border: none; border-radius: 10px;
+          cursor: pointer;
+          transition: opacity 0.18s, transform 0.18s, box-shadow 0.18s;
+          box-shadow: 0 4px 20px rgba(6,182,212,0.30);
+          width: 100%;
+        }
+        .login-submit:hover:not(.busy) {
+          opacity: 0.9;
+          transform: translateY(-1px);
+          box-shadow: 0 8px 32px rgba(6,182,212,0.45);
+        }
+        .login-submit.busy {
+          background: rgba(255,255,255,0.08);
+          color: rgba(234,250,241,0.45);
+          box-shadow: none;
+          cursor: not-allowed;
+        }
+        .login-spinner {
+          width: 14px; height: 14px;
+          border: 2px solid rgba(234,250,241,0.2);
+          border-top-color: rgba(234,250,241,0.7);
+          border-radius: 50%;
+          animation: login-spin 0.7s linear infinite;
+          flex-shrink: 0;
+        }
+        @keyframes login-spin { to { transform: rotate(360deg); } }
+
+        /* Demo hint */
+        .login-demo {
+          margin-top: 1.4rem;
+          padding: 0.85rem 1rem;
+          background: rgba(6,182,212,0.04);
+          border: 1px solid rgba(6,182,212,0.14);
+          border-radius: 10px;
+        }
+        .login-demo-label {
+          display: flex; align-items: center; gap: 0.4rem;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.6rem; letter-spacing: 0.14em;
+          text-transform: uppercase; font-weight: 700;
+          color: rgba(6,182,212,0.7);
+          margin-bottom: 0.45rem;
+        }
+        .login-demo-creds {
+          display: flex; align-items: center; gap: 0.5rem;
+          font-family: 'DM Mono', 'Courier New', monospace;
+          font-size: 0.72rem;
+          color: rgba(234,250,241,0.42);
+        }
+        .login-demo-email { color: #34d399; }
+        .login-demo-sep { color: rgba(234,250,241,0.2); }
+
+        /* Footer */
+        .login-footer {
+          position: fixed; bottom: 1.5rem; left: 0; right: 0;
+          text-align: center; z-index: 1;
+          font-family: 'Inter', sans-serif;
+          font-size: 0.6rem; letter-spacing: 0.1em;
+          text-transform: uppercase;
+          color: rgba(234,250,241,0.22);
+        }
+      `}</style>
     </div>
   );
 };
@@ -192,14 +390,8 @@ const Field = ({ label, type, value, onChange, placeholder }: {
 }) => {
   const [focused, setFocused] = useState(false);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.38rem' }}>
-      <label style={{
-        fontFamily: "'DM Mono', monospace",
-        fontSize: '0.52rem', letterSpacing: '0.16em',
-        textTransform: 'uppercase', color: 'rgba(222,219,210,0.38)',
-      }}>
-        {label}
-      </label>
+    <div className="login-field">
+      <label className="login-label">{label}</label>
       <input
         type={type}
         value={value}
@@ -207,16 +399,7 @@ const Field = ({ label, type, value, onChange, placeholder }: {
         onChange={e => onChange(e.target.value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        style={{
-          fontFamily: "'DM Mono', monospace",
-          fontSize: '0.72rem', letterSpacing: '0.04em',
-          padding: '0.68rem 0.85rem',
-          background: '#141414',
-          border: `1px solid ${focused ? 'rgba(222,219,210,0.24)' : 'rgba(222,219,210,0.08)'}`,
-          borderRadius: '8px',
-          color: '#dedbd2', outline: 'none',
-          transition: 'border-color 0.15s',
-        }}
+        className={`login-input${focused ? ' focused' : ''}`}
       />
     </div>
   );

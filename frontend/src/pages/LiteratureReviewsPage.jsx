@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect } from "react";
 import useResearchCorpus from "../hooks/useResearchCorpus";
 import { queryApi } from "../services/api";
+
 import {
   ActionButton,
   EmptyState,
@@ -14,7 +15,7 @@ import { useToast } from "../contexts/ToastContext";
 
 const LiteratureReviewsPage = () => {
   const { collections, papers } = useResearchCorpus();
-  const { showToast } = useToast();
+  const toast = useToast();
   
   const [reviews, setReviews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,10 +66,10 @@ const LiteratureReviewsPage = () => {
       setSelectedCollection("");
       setSelectedPapers([]);
       setTopic("");
-      showToast("Literature review generated successfully", "success");
+      toast.success("Literature review generated successfully");
     } catch (err) {
       console.error("Failed to generate review:", err);
-      showToast(err.message || "Failed to generate literature review", "error");
+      toast.error(err.message || "Failed to generate literature review");
     } finally {
       setGenerating(false);
     }
@@ -83,10 +84,10 @@ const LiteratureReviewsPage = () => {
   const exportMarkdown = async (review) => {
     try {
       await queryApi.exportLiteratureReview(review.id, 'markdown', review.title);
-      showToast("Exporting Markdown...", "success");
+      toast.success("Exporting Markdown...");
     } catch (err) {
       console.error("Export failed:", err);
-      showToast("Failed to export markdown", "error");
+      toast.error("Failed to export markdown");
     }
   };
 
@@ -112,13 +113,13 @@ const LiteratureReviewsPage = () => {
       {error && <ErrorNotice message={error} />}
 
       {activeReview ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20 }}>
+        <div className="report-detail-layout">
           <Panel title={activeReview.title} eyebrow={formatDate(activeReview.createdAt || activeReview.date)} action={<ActionButton variant="ghost" onClick={() => setActiveReview(null)}>Close</ActionButton>}>
             <div style={{ padding: "20px 30px", fontSize: "0.9rem", lineHeight: 1.7, color: "var(--rp-text)", whiteSpace: "pre-wrap" }}>
               {activeReview.markdown || activeReview.content}
             </div>
           </Panel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="report-detail-side">
             <Panel title="Review Details">
               <div style={{ padding: "15px", display: "flex", flexDirection: "column", gap: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>

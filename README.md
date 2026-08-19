@@ -11,8 +11,8 @@ DocLens AI is a full-stack platform designed to transform static research papers
 ## 🎯 Core Capabilities (What DocLens Actually Does)
 
 1. **Research Collections & Library**: Organize your PDFs into targeted domains.
-2. **Fast & Reliable Ingestion**: Upload PDFs and watch them get automatically extracted, chunked, and embedded into a high-speed FAISS vector index.
-3. **Citation-Backed Research Chat**: Ask questions across your collections. DocLens uses an advanced RAG pipeline to retrieve relevant chunks and generate answers. Every claim is backed by a clickable citation that reveals the exact source paragraph.
+2. **Fast & Reliable Ingestion**: Upload PDFs and watch them get automatically extracted using Docling, chunked hierarchically, and embedded into a high-speed PostgreSQL `pgvector` index.
+3. **Conversational Research Chat**: Ask questions across your collections with an intelligent AI that remembers your conversation history. DocLens uses an advanced RAG pipeline to retrieve relevant chunks and generate answers. Every claim is backed by a clickable citation that reveals the exact source paragraph.
 4. **Literature Reviews**: Automatically synthesize multi-paper literature reviews based *only* on retrieved text. Export them to Markdown or PDF.
 5. **Insights & Analytics**: Track your corpus size, processing health, and discovery velocity.
 6. **Workspace Notes**: Keep track of manual synthesis and thoughts alongside your automated chats.
@@ -37,14 +37,15 @@ DocLens operates as a monorepo containing a React frontend, a NestJS core API, a
 - **Framework:** NestJS (TypeScript)
 - **Database:** PostgreSQL
 - **ORM:** Prisma
+- **Caching:** In-memory CacheModule
 - **Authentication:** JWT (JSON Web Tokens)
 
 **AI & Semantic Service Layer**
 - **Framework:** FastAPI (Python)
-- **Vector Database:** FAISS (Facebook AI Similarity Search)
+- **Vector Database:** PostgreSQL (`pgvector`)
 - **Embeddings:** HuggingFace `sentence-transformers/all-MiniLM-L6-v2`
-- **LLM Provider:** OpenRouter (DeepSeek V3 default, Gemini 2.5 Flash fallback)
-- **Document Parsing:** PyMuPDF (`fitz`)
+- **LLM Provider:** Google Gemini API (`gemini-3.6-flash`)
+- **Document Parsing:** Docling
 
 ---
 
@@ -72,9 +73,9 @@ doclens-fullstack/
 │
 ├── ai-service/                 # FastAPI Python Semantic Engine
 │   ├── main.py                 # REST Endpoints
-│   ├── ingest.py               # PDF Parsing, Chunking & Embedding
-│   ├── query.py                # FAISS Retrieval & LLM Generation
-│   └── vector_store/           # Local FAISS index & metadata DB
+│   ├── ingest.py               # Docling Parsing, Chunking & Embedding
+│   ├── query.py                # pgvector Retrieval & Conversational LLM Generation
+│   └── vector_store/           # PostgreSQL pgvector interface
 ```
 
 ---
@@ -113,7 +114,7 @@ npx prisma migrate dev
 ```
 
 ### 3. AI Service Configuration
-Configure the Python environment and provide your OpenRouter API key.
+Configure the Python environment and provide your Gemini API key.
 ```bash
 cd ai-service
 python -m venv venv
@@ -123,7 +124,7 @@ pip install -r requirements.txt
 
 Create `ai-service/.env`:
 ```env
-OPENROUTER_API_KEY="your-openrouter-key"
+GEMINI_API_KEY="your-gemini-key"
 ```
 
 ### 4. Start Development Servers

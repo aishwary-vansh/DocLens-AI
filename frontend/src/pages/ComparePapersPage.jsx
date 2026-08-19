@@ -14,7 +14,7 @@ import { useToast } from "../contexts/ToastContext";
 
 const ComparePapersPage = () => {
   const { collections, papers } = useResearchCorpus();
-  const { showToast } = useToast();
+  const toast = useToast();
   
   const [comparisons, setComparisons] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -75,10 +75,10 @@ const ComparePapersPage = () => {
       setSelectedCollection("");
       setSelectedPapers([]);
       setQuestion("");
-      showToast("Comparison generated successfully", "success");
+      toast.success("Comparison generated successfully");
     } catch (err) {
       console.error("Comparison generation failed:", err);
-      showToast(err.message || "Failed to generate comparison", "error");
+      toast.error(err.message || "Failed to generate comparison");
     } finally {
       setGenerating(false);
     }
@@ -117,7 +117,7 @@ const ComparePapersPage = () => {
       {error && <ErrorNotice message={error} />}
 
       {activeComparison ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 20 }}>
+        <div className="report-detail-layout">
           <Panel
             title={activeComparison.title}
             eyebrow={formatDate(activeComparison.createdAt)}
@@ -131,7 +131,7 @@ const ComparePapersPage = () => {
               {activeComparison.markdown || activeComparison.result?.markdown || `# ${activeComparison.title}\n\n${activeComparison.narrative || activeComparison.result?.narrative || "No narrative generated."}`}
             </div>
           </Panel>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div className="report-detail-side">
             <Panel title="Comparison Details">
               <div style={{ padding: "15px", display: "flex", flexDirection: "column", gap: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>

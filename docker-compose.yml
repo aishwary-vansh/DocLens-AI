@@ -1,20 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: doclens
-      POSTGRES_USER: doclens
-      POSTGRES_PASSWORD: doclens
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U doclens -d doclens"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   redis:
     image: redis:7-alpine
     ports:
@@ -28,29 +12,16 @@ services:
       timeout: 5s
       retries: 10
 
-  ai-service:
+
+
+  backend-migrate:
     build:
-      context: ./ai-service
+      context: ./backend
+      target: build
     environment:
-      DATABASE_URL: postgresql+asyncpg://doclens:doclens@postgres:5432/doclens
-      # For local Docker Compose the callback goes to the backend container by name.
-      # On Render this env var is set in the Render dashboard to the public backend URL.
-      NESTJS_CALLBACK_URL: http://backend:3001/api/v1/internal/ai-callback
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-change-this-in-production}
-      MODEL_NAME: all-MiniLM-L6-v2
-      FAISS_INDEX_PATH: /app/data/faiss.index
-      CORS_ORIGINS: http://backend:3001
-      ENFORCE_INTERNAL_AUTH: "true"
-    volumes:
-      - ai-data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
-      interval: 20s
-      timeout: 10s
-      retries: 20
+      DATABASE_URL: ${DATABASE_URL}
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: "no"
 
   backend:
     build:
@@ -58,29 +29,23 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: postgresql://doclens:doclens@postgres:5432/doclens
+      DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379
-      AI_SERVICE_URL: http://ai-service:8000
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-change-this-in-production}
       JWT_SECRET: ${JWT_SECRET:-change-this-jwt-secret}
       JWT_EXPIRES_IN: 7d
       CORS_ORIGINS: http://localhost:5173,http://localhost:8080
-      ADMIN_EMAIL: admin@doclens.ai
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@doclens.ai}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@1234}
-      # The callback URL the AI service should use to POST status updates back.
-      # In Docker Compose the AI service reaches the backend via the container name.
       NESTJS_CALLBACK_URL: http://backend:3001/api/v1/internal/ai-callback
     ports:
       - "3001:3001"
     volumes:
       - backend-uploads:/app/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      ai-service:
-        condition: service_healthy
+
       backend-migrate:
         condition: service_completed_successfully
     healthcheck:
@@ -88,18 +53,6 @@ services:
       interval: 20s
       timeout: 10s
       retries: 20
-
-  backend-migrate:
-    build:
-      context: ./backend
-      target: build
-    environment:
-      DATABASE_URL: postgresql://doclens:doclens@postgres:5432/doclens
-    command: ["npx", "prisma", "migrate", "deploy"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: "no"
 
   frontend:
     build:
@@ -111,7 +64,5 @@ services:
         condition: service_healthy
 
 volumes:
-  postgres-data:
   redis-data:
-  ai-data:
   backend-uploads:

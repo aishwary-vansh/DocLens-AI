@@ -175,9 +175,9 @@ export function LoadingSkeleton({ rows = 3, variant = "card" }) {
   );
 }
 
-export function Panel({ title, eyebrow, children, action, className = "" }) {
+export function Panel({ title, eyebrow, children, action, className = "", style }) {
   return (
-    <section className={`research-panel ${className}`}>
+    <section className={`research-panel ${className}`} style={style}>
       {(title || eyebrow || action) && (
         <div className="panel-header">
           <div>

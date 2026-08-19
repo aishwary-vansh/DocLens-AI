@@ -5,7 +5,7 @@ const TECH_ROWS = [
   { layer: 'Frontend',     chips: ['React', 'TailwindCSS', 'Socket.io Client'] },
   { layer: 'API Gateway',  chips: ['NestJS', 'WebSockets', 'JWT Auth'] },
   { layer: 'AI Service',   chips: ['Python', 'FastAPI', 'HuggingFace'] },
-  { layer: 'Vector Store', chips: ['FAISS', 'Sentence Transformers'] },
+  { layer: 'Vector Store', chips: ['pgvector', 'Sentence Transformers'] },
   { layer: 'Database',     chips: ['PostgreSQL', 'Prisma ORM'] },
   { layer: 'Deployment',   chips: ['Docker', 'Docker Compose', 'Nginx'] },
 ];
@@ -61,7 +61,7 @@ const ArchDiagram = () => (
     <line x1="430" y1="100" x2="572" y2="100" stroke="rgba(222,219,210,0.1)" strokeWidth="0.5"/>
     <text x="500" y="118" fill="#dedbd2" fontFamily="monospace" fontSize="7.5" textAnchor="middle" opacity="0.35">Sentence Transformers</text>
     <text x="500" y="133" fill="#dedbd2" fontFamily="monospace" fontSize="7.5" textAnchor="middle" opacity="0.35">HuggingFace LLM</text>
-    <text x="500" y="148" fill="#dedbd2" fontFamily="monospace" fontSize="7.5" textAnchor="middle" opacity="0.3">FAISS Index</text>
+    <text x="500" y="148" fill="#dedbd2" fontFamily="monospace" fontSize="7.5" textAnchor="middle" opacity="0.3">pgvector Index</text>
     <text x="500" y="163" fill="#dedbd2" fontFamily="monospace" fontSize="7.5" textAnchor="middle" opacity="0.25">PyMuPDF Extractor</text>
     {/* Arrows to storage */}
     <line x1="580" y1="80"  x2="640" y2="80"  stroke="rgba(222,219,210,0.15)" strokeWidth="1"/>
@@ -112,7 +112,7 @@ const LandingTech = () => {
       </div>
 
       <div className="arch-box reveal" ref={archRef}>
-        <div className="arch-box-label">// System architecture overview</div>
+        <div className="arch-box-label">System architecture overview</div>
         <ArchDiagram />
       </div>
     </section>

@@ -1,5 +1,6 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -15,10 +16,16 @@ import { AppController } from './app.controller';
 // ── AI Intelligence Layer ───────────────────────────────────────────────────
 import { AiProxyModule } from './ai-proxy/ai-proxy.module';
 import { QueryModule } from './query/query.module';
-import { InternalModule } from './internal/internal.module';
+
 
 @Module({
   imports: [
+    // ── Cache Module ────────────────────────────────────────────────────────
+    CacheModule.register({
+      isGlobal: true,
+      ttl: 60000, // default 60s
+    }),
+
     // ── Config — globally available via ConfigService ──────────────────
     ConfigModule.forRoot({
       isGlobal: true,
@@ -43,7 +50,7 @@ import { InternalModule } from './internal/internal.module';
     // ── AI Intelligence Layer ──────────────────────────────────────────
     AiProxyModule,
     QueryModule,
-    InternalModule,
+
   ],
   controllers: [AppController],
   providers: [

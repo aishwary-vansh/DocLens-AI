@@ -14,6 +14,7 @@ import {
   Body,
   Res,
 } from '@nestjs/common';
+import { CacheInterceptor } from '@nestjs/cache-manager';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, join, basename } from 'path';
@@ -83,6 +84,7 @@ export class DocumentsController {
 
   // ─── GET /documents?collectionId=xxx ─────────────────────────
   @Get()
+  @UseInterceptors(CacheInterceptor)
   @ApiOperation({ summary: 'List all documents in a collection' })
   @ApiQuery({ name: 'collectionId', required: true })
   findAll(@Query('collectionId') collectionId: string, @CurrentUser() user: any) {
@@ -91,6 +93,7 @@ export class DocumentsController {
 
   // ─── GET /documents/:id ──────────────────────────────────────
   @Get('workspace/overview')
+  @UseInterceptors(CacheInterceptor)
   @ApiOperation({ summary: 'Get research workspace overview data' })
   workspaceOverview(@CurrentUser() user: any) {
     return this.documentsService.workspaceOverview(user.id);

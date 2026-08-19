@@ -12,14 +12,10 @@ import PapersPage from "./pages/PapersPage";
 import ChatPage from "./pages/ChatPage";
 import LiteratureReviewsPage from "./pages/LiteratureReviewsPage";
 import ComparePapersPage from "./pages/ComparePapersPage";
-import NotesPage from "./pages/NotesPage";
-import ReadingListPage from "./pages/ReadingListPage";
-import AnalyticsPage from "./pages/AnalyticsPage";
 import SettingsPage from "./pages/SettingsPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
-import CustomCursor from "./components/common/CustomCursor";
 import "./styles/research-platform.css";
 
 function LoadingSplash() {
@@ -35,13 +31,12 @@ function LoadingSplash() {
     }}>
       <div style={{ display: "grid", justifyItems: "center", gap: 12 }}>
         <div style={{
-          width: 32,
-          height: 32,
-          borderRadius: "50%",
-          border: "2px solid rgba(236,244,241,0.12)",
-          borderTopColor: "#6ee7f9",
-          animation: "spin 0.8s linear infinite",
-        }} />
+          width: 80,
+          height: 80,
+          animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
+        }}>
+          <img src="/logo.png" alt="DocLens Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+        </div>
         <span style={{ fontSize: 12, letterSpacing: "0.18em", textTransform: "uppercase", color: "rgba(236,244,241,0.55)" }}>
           Loading DocLens
         </span>
@@ -60,9 +55,6 @@ function ActivePage() {
   if (activePage === PAGES.CHAT) return <ChatPage />;
   if (activePage === PAGES.LITERATURE_REVIEWS) return <LiteratureReviewsPage />;
   if (activePage === PAGES.COMPARE_PAPERS) return <ComparePapersPage />;
-  if (activePage === PAGES.NOTES) return <NotesPage />;
-  if (activePage === PAGES.READING_LIST) return <ReadingListPage />;
-  if (activePage === PAGES.ANALYTICS) return <AnalyticsPage />;
   if (activePage === PAGES.SETTINGS) return <SettingsPage />;
   return <NotFoundPage />;
 }
@@ -79,7 +71,6 @@ function AppInner() {
   if (isAuthenticated && showLanding) {
     return (
       <>
-        <CustomCursor />
         {/* Floating banner so the user can get back into the app */}
         <div style={{
           position: 'fixed', top: 16, right: 16, zIndex: 9999,
@@ -114,9 +105,8 @@ function AppInner() {
   if (!isAuthenticated) {
     if (showLogin) {
       return (
-        <>
-          <CustomCursor />
-          <Login />
+      <>
+        <Login />
         </>
       );
     }
@@ -125,7 +115,6 @@ function AppInner() {
 
   return (
     <>
-      <CustomCursor />
       <Layout onShowLanding={() => setShowLanding(true)}>
         <ErrorBoundary resetKey={`${activePage}-${activeCollectionId || ""}`}>
           <ActivePage />

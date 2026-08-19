@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap");
 @import "tailwindcss";
 
 @theme {
@@ -29,9 +29,29 @@
   --color-sky:          #0EA5E9;
   --color-sky-light:    #F0F9FF;
 
+  /* ── shadcn/ui token bridge (Tailwind v4 CSS vars) ───────── */
+  --color-background:              #09090b;
+  --color-foreground:              #fafafa;
+  --color-primary:                 #6366f1;
+  --color-primary-foreground:      #ffffff;
+  --color-secondary:               rgba(255,255,255,0.08);
+  --color-secondary-foreground:    #fafafa;
+  --color-destructive:             #ef4444;
+  --color-destructive-foreground:  #ffffff;
+  --color-muted:                   rgba(255,255,255,0.06);
+  --color-muted-foreground:        rgba(250,250,250,0.55);
+  --color-accent:                  rgba(255,255,255,0.10);
+  --color-accent-foreground:       #fafafa;
+  --color-card:                    #111113;
+  --color-card-foreground:         #fafafa;
+  --color-popover:                 #111113;
+  --color-popover-foreground:      #fafafa;
+  --color-input:                   rgba(255,255,255,0.10);
+  --color-ring:                    #6366f1;
 
   /* ── Typography ──────────────────────────────────────────── */
-  --font-syne:     "Syne", sans-serif;
+  --font-outfit:   "Outfit", sans-serif;
+  --font-syne:     "Outfit", sans-serif;   /* alias kept for compat */
   --font-mono-dm:  "DM Mono", monospace;
   --font-cabinet:  "Inter", sans-serif;
 
@@ -47,41 +67,32 @@
 @layer base {
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  html, body, #root {
+  html {
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  body, #root {
     height: 100%;
     width: 100%;
     overflow: hidden;
     background: var(--color-bg);
     color: var(--color-text-primary);
     font-family: "Inter", sans-serif;
-    cursor: auto;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01";
+    font-variation-settings: normal;
   }
 }
 
 /* ── Design system components ────────────────────────────────── */
 @layer components {
 
-  /* Custom cursor */
-  .cursor {
-    @apply fixed w-[9px] h-[9px] rounded-full pointer-events-none z-[9999];
-    background: var(--color-indigo);
-    top: 0;
-    left: 0;
-    transform: translate(-50%, -50%);
-    transition: width 0.15s, height 0.15s, opacity 0.15s;
-    mix-blend-mode: normal;
+  /* Sidebar orb — keep class name, adapt colors */
+  .sidebar-orb {
+    @apply absolute rounded-full blur-[50px] pointer-events-none;
   }
-  .cursor-ring {
-    @apply fixed w-[30px] h-[30px] border-[1.5px] rounded-full pointer-events-none z-[9998];
-    border-color: rgba(91,108,248,0.35);
-    top: 0;
-    left: 0;
-    transform: translate(-50%, -50%);
-  }
-
-  /* Card */
   .card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);

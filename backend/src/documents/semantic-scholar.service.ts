@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject } from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class SemanticScholarService {
@@ -6,11 +8,19 @@ export class SemanticScholarService {
   private readonly ssBaseUrl = 'https://api.semanticscholar.org/graph/v1/paper/search';
   private readonly crBaseUrl = 'https://api.crossref.org/works';
 
+  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+
   async fetchPaperMetadata(title: string): Promise<{
     citationCount: number;
     authors: string[];
     year: number | null;
   } | null> {
+    const cacheKey = `ss_meta_${title}`;
+    const cached = await this.cacheManager.get<any>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     try {
       // 1. Try Semantic Scholar
       const ssUrl = `${this.ssBaseUrl}?query=${encodeURIComponent(title)}&limit=1&fields=title,authors,citationCount,year`;
@@ -20,11 +30,13 @@ export class SemanticScholarService {
         const data = await ssResponse.json();
         if (data.data && data.data.length > 0) {
           const paper = data.data[0];
-          return {
+          const result = {
             citationCount: paper.citationCount ?? 0,
             authors: paper.authors ? paper.authors.map((a: any) => a.name) : [],
             year: paper.year ?? null,
           };
+          await this.cacheManager.set(cacheKey, result, 86400000); // 24h
+          return result;
         }
       } else if (ssResponse.status === 429) {
         this.logger.warn(`Semantic Scholar API rate limit exceeded for title: "${title}". Falling back to CrossRef.`);
@@ -39,11 +51,13 @@ export class SemanticScholarService {
           const paper = data.message.items[0];
           const authors = paper.author ? paper.author.map((a: any) => `${a.given || ''} ${a.family || ''}`.trim()) : [];
           const year = paper.created?.['date-parts']?.[0]?.[0] ?? null;
-          return {
+          const result = {
             citationCount: paper['is-referenced-by-count'] ?? 0,
             authors,
             year,
           };
+          await this.cacheManager.set(cacheKey, result, 86400000); // 24h
+          return result;
         }
       }
 

@@ -22,43 +22,15 @@ import {
   suggestedCollections,
 } from "../utils/researchData";
 
-// Getting Started checklist
-function GettingStarted({ hasWorkspace, hasCollection, hasPapers, hasQuery, navigateTo }) {
-  const steps = [
-    { done: hasCollection, label: "Create a research collection", action: () => navigateTo(PAGES.COLLECTIONS) },
-    { done: hasPapers,     label: "Upload your first paper",      action: () => navigateTo(PAGES.PAPERS) },
-    { done: hasQuery,      label: "Ask a research question",      action: () => navigateTo(PAGES.CHAT) },
-  ];
-  const allDone = steps.every(s => s.done);
-  if (allDone) return null;
-  return (
-    <Panel title="Getting Started" eyebrow="Setup">
-      <div className="checklist">
-        {steps.map((step, i) => (
-          <button
-            key={step.label}
-            className={`checklist-item ${step.done ? "done" : ""}`}
-            onClick={step.done ? undefined : step.action}
-            type="button"
-            style={{ cursor: step.done ? "default" : "pointer" }}
-          >
-            <div className={`check-mark ${step.done ? "done" : ""}`}>{step.done ? "✓" : i + 1}</div>
-            <span>{step.label}</span>
-            {!step.done && <Icon name="arrowRight" size={14} />}
-          </button>
-        ))}
-      </div>
-    </Panel>
-  );
-}
+// Getting Started removed to save vertical space
 
 const Dashboard = () => {
   const { navigateTo } = useApp();
   const { workspaces, collections, papers, loading, error } = useResearchCorpus();
   const [semanticQuery, setSemanticQuery] = useState(localStorage.getItem("doclens_last_query") || "");
 
-  const stats    = useMemo(() => buildResearchStats({ workspaces, collections, papers }), [collections, papers, workspaces]);
-  const activity = useMemo(() => buildActivityFeed({ collections, papers }),             [collections, papers]);
+  const stats = useMemo(() => buildResearchStats({ workspaces, collections, papers }), [collections, papers, workspaces]);
+  const activity = useMemo(() => buildActivityFeed({ collections, papers }), [collections, papers]);
   const visibleCollections = collections.length ? collections.slice(0, 4) : suggestedCollections;
   const hasQuery = Number(localStorage.getItem("doclens_query_count") || 0) > 0;
 
@@ -87,16 +59,10 @@ const Dashboard = () => {
 
       <ErrorNotice message={error && "Live corpus data unavailable. The research workspace shell is still ready."} />
 
-      {/* Getting started checklist (hides once complete) */}
-      <GettingStarted
-        hasCollection={collections.length > 0}
-        hasPapers={papers.length > 0}
-        hasQuery={hasQuery}
-        navigateTo={navigateTo}
-      />
 
-      {/* Command panel + quick actions */}
-      <section className="command-center-grid" style={{ marginTop: 14 }}>
+
+      {/* Command panel */}
+      <section style={{ marginTop: 14 }}>
         <div className="research-command-panel">
           <div>
             <div className="eyebrow">Research Overview</div>
@@ -139,54 +105,20 @@ const Dashboard = () => {
             </div>
           </div>
         </div>
-
-        <Panel title="Quick Actions" eyebrow="Start here">
-          <div className="quick-actions">
-            {[
-              { icon: "upload",      label: "Upload Paper",           sub: "Add PDFs and begin indexing",          page: PAGES.PAPERS },
-              { icon: "collections", label: "Create Collection",       sub: "Group papers into a research domain",  page: PAGES.COLLECTIONS },
-
-              { icon: "chat",        label: "Start Research Session",  sub: "Ask grounded questions with citations", page: PAGES.CHAT },
-            ].map(action => (
-              <button className="quick-action" key={action.label} onClick={() => navigateTo(action.page)} type="button">
-                <Icon name={action.icon} size={18} />
-                <div>
-                  <strong>{action.label}</strong>
-                  <span>{action.sub}</span>
-                </div>
-                <Icon name="arrowRight" size={15} />
-              </button>
-            ))}
-          </div>
-        </Panel>
       </section>
 
       {/* Stats row */}
       <section className="stat-grid" aria-label="Research intelligence metrics">
-        <ResearchStatCard icon="papers"    label="Papers Uploaded"    value={stats.papersUploaded}              trend="+ live"     growth={`${stats.completed} ready for analysis`}   description="PDFs imported into the research library."                   tone="blue"   />
-        <ResearchStatCard icon="collections" label="Collections"      value={stats.collectionsCreated}          trend="+ domains"  growth={`${stats.workspaces} workspace${stats.workspaces !== 1 ? "s" : ""}`} description="Research domains used to organize papers." tone="green"  />
-        <ResearchStatCard icon="book"      label="Literature Reviews" value={stats.literatureReviews}           trend="+ synthesis" growth="multi-paper reports"                       description="Generated reviews synthesizing multiple sources."           tone="cyan"   />
-        <ResearchStatCard icon="citation"  label="Citations"          value={stats.citationsGenerated}          trend="+ grounded" growth="source-aware answers"                       description="Citation anchors available for paper Q&A."                  tone="amber"  />
-        <ResearchStatCard icon="chat"      label="Queries Asked"      value={stats.queriesAsked}                trend="+ sessions" growth="research chat history"                      description="Semantic questions asked across the corpus."                tone="violet" />
+        <ResearchStatCard icon="papers" label="Papers Uploaded" value={stats.papersUploaded} trend="+ live" growth={`${stats.completed} ready for analysis`} description="PDFs imported into the research library." tone="blue" />
+        <ResearchStatCard icon="collections" label="Collections" value={stats.collectionsCreated} trend="+ domains" growth={`${stats.workspaces} workspace${stats.workspaces !== 1 ? "s" : ""}`} description="Research domains used to organize papers." tone="green" />
+        <ResearchStatCard icon="book" label="Literature Reviews" value={stats.literatureReviews} trend="+ synthesis" growth="multi-paper reports" description="Generated reviews synthesizing multiple sources." tone="cyan" />
+        <ResearchStatCard icon="citation" label="Citations" value={stats.citationsGenerated} trend="+ grounded" growth="source-aware answers" description="Citation anchors available for paper Q&A." tone="amber" />
+        <ResearchStatCard icon="chat" label="Queries Asked" value={stats.queriesAsked} trend="+ sessions" growth="research chat history" description="Semantic questions asked across the corpus." tone="violet" />
 
       </section>
 
-      {/* Processing queue + recent papers */}
-      <section className="dashboard-section-grid">
-        <Panel title="Recent Papers" eyebrow="Research library">
-          {loading ? (
-            <LoadingSkeleton rows={4} />
-          ) : papers.length ? (
-            papers.slice(0, 6).map(p => <PaperSummaryLine key={p.id} paper={p} />)
-          ) : (
-            <EmptyState compact icon="papers"
-              title="No papers uploaded yet"
-              description="Upload your first research paper to start building your library."
-              action={<ActionButton icon="upload" onClick={() => navigateTo(PAGES.PAPERS)}>Upload Paper</ActionButton>}
-            />
-          )}
-        </Panel>
-
+      {/* Research Collections (Full Width) */}
+      <section className="full-width-section">
         <Panel title="Research Collections" eyebrow="Domains">
           <div className="panel-padding">
             <div className="collection-card-grid">
@@ -204,12 +136,33 @@ const Dashboard = () => {
         </Panel>
       </section>
 
-      {/* Activity + processing queue */}
+      {/* Recent Papers + Activity Feed (Side-by-side, perfectly even heights) */}
       <section className="dashboard-section-grid">
-        <Panel title="Research Activity Feed" eyebrow="Timeline">
-          <ActivityTimeline items={activity} />
+        <Panel title="Recent Papers" eyebrow="Research library">
+          <div style={{ height: "420px", overflowY: "auto", overflowX: "hidden" }}>
+            {loading ? (
+              <LoadingSkeleton rows={4} />
+            ) : papers.length ? (
+              papers.slice(0, 6).map(p => <PaperSummaryLine key={p.id} paper={p} />)
+            ) : (
+              <EmptyState compact icon="papers"
+                title="No papers uploaded yet"
+                description="Upload your first research paper to start building your library."
+                action={<ActionButton icon="upload" onClick={() => navigateTo(PAGES.PAPERS)}>Upload Paper</ActionButton>}
+              />
+            )}
+          </div>
         </Panel>
 
+        <Panel title="Research Activity Feed" eyebrow="Timeline">
+          <div style={{ height: "420px", overflowY: "auto", overflowX: "hidden", padding: "10px 18px" }}>
+            <ActivityTimeline items={activity} />
+          </div>
+        </Panel>
+      </section>
+
+      {/* Processing Queue (Full width, slim fallback) */}
+      <section className="full-width-section">
         <Panel title="Processing Queue" eyebrow={processingQueue.length > 0 ? `${processingQueue.length} in pipeline` : "Pipeline"}>
           {processingQueue.length > 0 ? (
             <div style={{ padding: "10px 20px" }}>
@@ -220,9 +173,9 @@ const Dashboard = () => {
                     <span style={{ fontFamily: "var(--rp-mono)", fontSize: "0.65rem", color: "var(--rp-amber)" }}>{p.status}</span>
                   </div>
                   <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-                    {["UPLOADED","PROCESSING","READY"].map((s, i) => {
-                      const isProcessing = ["EXTRACTING","CHUNKING","EMBEDDING","INDEXING"].includes(p.status);
-                      const isReady = ["READY","COMPLETED"].includes(p.status);
+                    {["UPLOADED", "PROCESSING", "READY"].map((s, i) => {
+                      const isProcessing = ["EXTRACTING", "CHUNKING", "EMBEDDING", "INDEXING"].includes(p.status);
+                      const isReady = ["READY", "COMPLETED"].includes(p.status);
                       const stageIdx = isReady ? 2 : isProcessing ? 1 : 0;
                       return (
                         <div key={s} style={{
@@ -236,22 +189,8 @@ const Dashboard = () => {
               ))}
             </div>
           ) : (
-            <div className="quick-actions">
-              {sampleQueries.map(query => (
-                <button
-                  className="quick-action"
-                  key={query}
-                  onClick={() => { localStorage.setItem("doclens_last_query", query); navigateTo(PAGES.CHAT); }}
-                  type="button"
-                >
-                  <Icon name="search" size={17} />
-                  <div>
-                    <strong>{query}</strong>
-                    <span>Send to Research Chat</span>
-                  </div>
-                  <Icon name="arrowRight" size={15} />
-                </button>
-              ))}
+            <div style={{ padding: "16px", textAlign: "center", color: "var(--rp-text-muted)", fontSize: "0.8rem" }}>
+              Queue is empty.
             </div>
           )}
         </Panel>

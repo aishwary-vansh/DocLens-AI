@@ -48,8 +48,8 @@ const CustomCursor = () => {
 
   return (
     <>
-      <div ref={dotRef} className="cursor" />
-      <div ref={ringRef} className="cursor-ring" />
+      <div ref={dotRef} className="cursor" style={{ position: "fixed", top: 0, left: 0, zIndex: 9999, pointerEvents: "none" }} />
+      <div ref={ringRef} className="cursor-ring" style={{ position: "fixed", top: 0, left: 0, zIndex: 9998, pointerEvents: "none" }} />
     </>
   );
 };

@@ -30,9 +30,9 @@ const HeroDeco = () => (
     <text x="48" y="385" fill="#dedbd2" fontFamily="monospace" fontSize="8.5" opacity="0.25">dim: 768 · model: all-MiniLM-L6-v2</text>
     {/* Connector down */}
     <line x1="118" y1="400" x2="118" y2="458" stroke="#dedbd2" strokeWidth="0.5" strokeDasharray="4 4" opacity="0.15"/>
-    {/* FAISS index box */}
+    {/* pgvector index box */}
     <rect x="30" y="458" width="370" height="80" stroke="#dedbd2" strokeWidth="0.6" opacity="0.2"/>
-    <text x="48" y="480" fill="#dedbd2" fontFamily="monospace" fontSize="8" opacity="0.4">FAISS  IndexFlatIP</text>
+    <text x="48" y="480" fill="#dedbd2" fontFamily="monospace" fontSize="8" opacity="0.4">pgvector HNSW</text>
     <line x1="30" y1="490" x2="400" y2="490" stroke="#dedbd2" strokeWidth="0.4" opacity="0.15"/>
     <rect x="42"  y="500" width="32" height="22" stroke="#dedbd2" strokeWidth="0.5" opacity="0.3"/>
     <rect x="82"  y="500" width="32" height="22" stroke="#dedbd2" strokeWidth="0.5" opacity="0.3"/>

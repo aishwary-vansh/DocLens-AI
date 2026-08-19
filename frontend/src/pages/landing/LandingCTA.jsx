@@ -14,7 +14,7 @@ const LandingCTA = ({ onGetStarted }) => {
   return (
     <section className="l-cta" id="contact">
       <div className="sec-label" style={{ justifyContent: 'center' }}>
-        // Ready to build
+        Ready to build
       </div>
       <h2 className="cta-title reveal" ref={ref}>
         TRANSFORM YOUR<br />

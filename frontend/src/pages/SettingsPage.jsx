@@ -7,7 +7,7 @@ import Icon from "../components/research/Icons";
 
 const SERVICES = [
   { label: "Document Ingestion",   detail: "PDF upload, text extraction, chunking pipeline", status: "online"  },
-  { label: "Semantic Search",      detail: "FAISS vector retrieval + question answering",     status: "pending" },
+  { label: "Semantic Search",      detail: "pgvector vector retrieval + question answering",     status: "pending" },
   { label: "Citation Grounding",   detail: "Source references in research chat answers",      status: "online"  },
   { label: "Real-Time Processing", detail: "WebSocket-based pipeline status updates",         status: "online"  },
   { label: "AI Query Service",     detail: "FastAPI + HuggingFace embedding models",          status: "offline" },
@@ -16,7 +16,7 @@ const SERVICES = [
 const TECH_STACK = [
   { layer: "Frontend",          items: ["React", "Vite", "TailwindCSS"] },
   { layer: "Backend API",       items: ["NestJS", "Prisma", "PostgreSQL"] },
-  { layer: "AI / Retrieval",    items: ["FastAPI", "FAISS", "Sentence-Transformers"] },
+  { layer: "AI / Retrieval",    items: ["FastAPI", "pgvector", "Sentence-Transformers"] },
   { layer: "Real-Time",         items: ["Socket.io", "WebSockets"] },
 ];
 

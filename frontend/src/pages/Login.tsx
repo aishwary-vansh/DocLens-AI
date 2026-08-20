@@ -111,20 +111,7 @@ const Login = () => {
           </button>
         </form>
 
-        {/* Demo hint */}
-        <div className="login-demo">
-          <div className="login-demo-label">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
-            </svg>
-            Demo Access
-          </div>
-          <div className="login-demo-creds">
-            <span className="login-demo-email">admin@doclens.ai</span>
-            <span className="login-demo-sep">/</span>
-            <span>Admin@1234</span>
-          </div>
-        </div>
+
       </div>
 
       {/* Bottom label */}
@@ -345,30 +332,7 @@ const Login = () => {
         }
         @keyframes login-spin { to { transform: rotate(360deg); } }
 
-        /* Demo hint */
-        .login-demo {
-          margin-top: 1.4rem;
-          padding: 0.85rem 1rem;
-          background: rgba(6,182,212,0.04);
-          border: 1px solid rgba(6,182,212,0.14);
-          border-radius: 10px;
-        }
-        .login-demo-label {
-          display: flex; align-items: center; gap: 0.4rem;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.6rem; letter-spacing: 0.14em;
-          text-transform: uppercase; font-weight: 700;
-          color: rgba(6,182,212,0.7);
-          margin-bottom: 0.45rem;
-        }
-        .login-demo-creds {
-          display: flex; align-items: center; gap: 0.5rem;
-          font-family: 'DM Mono', 'Courier New', monospace;
-          font-size: 0.72rem;
-          color: rgba(234,250,241,0.42);
-        }
-        .login-demo-email { color: #34d399; }
-        .login-demo-sep { color: rgba(234,250,241,0.2); }
+
 
         /* Footer */
         .login-footer {

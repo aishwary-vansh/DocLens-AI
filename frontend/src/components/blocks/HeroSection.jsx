@@ -3,6 +3,7 @@ import { ArrowRight, ChevronRight, Menu, X } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { AnimatedGroup } from '@/components/ui/AnimatedGroup'
 import { cn } from '@/lib/utils'
+import logoUrl from '@/assets/logo.png'
 
 const transitionVariants = {
     item: {
@@ -330,15 +331,7 @@ const HeroHeader = ({ onGetStarted }) => {
 const DocLensLogo = ({ className }) => {
     return (
         <div className={cn('flex items-center gap-2', className)}>
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center">
-                <svg viewBox="0 0 16 16" fill="none" className="w-4 h-4">
-                    <rect x="2" y="1" width="8" height="11" rx="1" stroke="white" strokeWidth="1.2" />
-                    <rect x="5" y="4" width="5" height="1" fill="white" opacity="0.7" />
-                    <rect x="5" y="6.5" width="4" height="1" fill="white" opacity="0.5" />
-                    <circle cx="11" cy="11" r="3" stroke="white" strokeWidth="1.2" />
-                    <line x1="13.2" y1="13.2" x2="14.5" y2="14.5" stroke="white" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-            </div>
+            <img src={logoUrl} alt="DocLens Logo" className="w-8 h-auto object-contain rounded-md" />
             <span className="font-bold text-base tracking-tight hero-logo-text">DocLens</span>
         </div>
     )

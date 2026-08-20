@@ -14,8 +14,7 @@ DocLens AI is a full-stack platform designed to transform static research papers
 2. **Fast & Reliable Ingestion**: Upload PDFs and watch them get automatically extracted using Docling, chunked hierarchically, and embedded into a high-speed PostgreSQL `pgvector` index.
 3. **Conversational Research Chat**: Ask questions across your collections with an intelligent AI that remembers your conversation history. DocLens uses an advanced RAG pipeline to retrieve relevant chunks and generate answers. Every claim is backed by a clickable citation that reveals the exact source paragraph.
 4. **Literature Reviews**: Automatically synthesize multi-paper literature reviews based *only* on retrieved text. Export them to Markdown or PDF.
-5. **Insights & Analytics**: Track your corpus size, processing health, and discovery velocity.
-6. **Workspace Notes**: Keep track of manual synthesis and thoughts alongside your automated chats.
+5. **Paper Comparison**: Select multiple papers to synthesize differences in methodology, findings, datasets, and limitations side-by-side.
 
 *Note: DocLens strictly relies on retrieved paper content and does not invent information. We do not support "Knowledge Graphs", "Neo4j integrations", or "Auto-generated concept pipelines", as we prioritize grounded, verifiable answers over speculative extraction.*
 
@@ -29,7 +28,7 @@ DocLens operates as a monorepo containing a React frontend, a NestJS core API, a
 
 **Frontend Layer**
 - **Framework:** React 18 powered by Vite
-- **Styling:** Custom Vanilla CSS (Dark-theme, glassmorphism aesthetics)
+- **Styling:** Tailwind CSS & Custom Vanilla CSS (Dark-theme, glassmorphism aesthetics)
 - **State Management:** React Context API
 - **Icons:** Lucide React
 
@@ -159,7 +158,7 @@ The application will be available at `http://localhost:5173`.
 
 1. **Grounded Over Generative:** Any new AI features must maintain a strict line-of-sight to the source document. If a feature relies on LLMs "guessing" relationships or extracting structured data unreliably, it does not belong in DocLens.
 2. **Architecture:** The NestJS backend acts as the source of truth for Users, Authentication, and access control. The FastAPI service acts purely as a stateless/semantic worker for ingestion and retrieval. Do not cross these boundaries.
-3. **UI/UX:** Maintain the premium, dark-themed aesthetic. Avoid injecting massive frameworks like Tailwind unless strictly necessary for a specific component.
+3. **UI/UX:** Maintain the premium, dark-themed aesthetic.
 
 ---
 

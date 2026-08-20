@@ -3,6 +3,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useSocket } from "../../contexts/SocketContext";
 import useServiceHealth from "../../hooks/useServiceHealth";
 import Icon from "../research/Icons";
+import logoUrl from "@/assets/logo.png";
 
 const NAV_ITEMS = [
   { id: PAGES.DASHBOARD, label: "Dashboard", icon: "dashboard" },
@@ -52,7 +53,7 @@ const Sidebar = ({ onShowLanding }) => {
         }}
       >
         <img 
-          src="/logo.png" 
+          src={logoUrl} 
           alt="DocLens Logo" 
           style={{ 
             width: collapsed ? 32 : 44, 

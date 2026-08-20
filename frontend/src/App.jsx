@@ -1,4 +1,5 @@
 import { useState } from "react";
+import logoUrl from "@/assets/logo.png";
 import { useAuth } from "./contexts/AuthContext";
 import { AppProvider, useApp, PAGES } from "./contexts/AppContext";
 import { ToastProvider } from "./contexts/ToastContext";
@@ -35,7 +36,7 @@ function LoadingSplash() {
           height: 80,
           animation: "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         }}>
-          <img src="/logo.png" alt="DocLens Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          <img src={logoUrl} alt="DocLens Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
         </div>
         <span style={{ fontSize: 12, letterSpacing: "0.18em", textTransform: "uppercase", color: "rgba(236,244,241,0.55)" }}>
           Loading DocLens

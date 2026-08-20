@@ -2,6 +2,7 @@
 import { useState, FormEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import BgCanvas from './landing/BgCanvas';
+import logoUrl from '@/assets/logo.png';
 
 type Mode = 'login' | 'register';
 
@@ -41,7 +42,7 @@ const Login = () => {
 
         {/* Brand */}
         <div className="login-brand">
-          <img src="/logo.png" alt="DocLens Logo" style={{ width: 80, height: "auto", objectFit: "contain", flexShrink: 0, borderRadius: 12 }} />
+          <img src={logoUrl} alt="DocLens Logo" style={{ width: 80, height: "auto", objectFit: "contain", flexShrink: 0, borderRadius: 12 }} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span className="login-logo-text">DocLens</span>
             <span className="login-logo-badge" style={{ alignSelf: 'flex-start' }}>AI</span>

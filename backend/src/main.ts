@@ -13,15 +13,39 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { UsersService } from './users/users.service';
 
+const WEAK_SECRETS = new Set([
+  'change-me',
+  'change-me-in-production',
+  'change-this-jwt-secret',
+  'secret',
+  '',
+]);
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['log', 'warn', 'error', 'debug'],
   });
 
   const config = app.get(ConfigService);
-  const port = config.get<number>('port') ?? 3001;
+  const port        = config.get<number>('port') ?? 3001;
   const corsOrigins = config.get<string[]>('cors.origins') ?? ['http://localhost:5173'];
-  const isDev = config.get<string>('nodeEnv') !== 'production';
+  const isDev       = config.get<string>('nodeEnv') !== 'production';
+  const jwtSecret   = config.get<string>('jwt.secret') ?? '';
+
+  // ── Trust proxy (required for correct IP when behind nginx/reverse-proxy) ──
+  // This ensures req.ip and X-Forwarded-For are reliable, and rate-limiting
+  // works correctly when the app sits behind nginx in Docker.
+  app.set('trust proxy', 1);
+
+  // ── Startup security check ───────────────────────────────────────────────
+  if (WEAK_SECRETS.has(jwtSecret) || jwtSecret.length < 32) {
+    Logger.warn(
+      '⚠️  JWT_SECRET is weak or unset. ' +
+      'Authentication will be INSECURE in this configuration. ' +
+      'Set a strong random JWT_SECRET (≥32 chars) before deploying.',
+      'Bootstrap',
+    );
+  }
 
   app.use(
     helmet({
@@ -30,19 +54,21 @@ async function bootstrap() {
   );
 
   // ── Static uploads directory ─────────────────────────────────────────────
-  // Uploaded PDFs are accessible at: GET /uploads/<userId>/<filename>
   app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
 
   // ── Global prefix ────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');
 
   // ── CORS ─────────────────────────────────────────────────────────────────
+  // Use origin:true to dynamically reflect the incoming Origin header.
+  // This allows any deployed frontend URL without hardcoding URLs.
+  // credentials:true enables Authorization header forwarding.
   app.enableCors({
-    origin: true, // Dynamically reflects the incoming Origin, allowing any deployed frontend URL
+    origin: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
-    optionsSuccessStatus: 204, // Ensure preflight returns 204 with proper headers
+    optionsSuccessStatus: 204,
   });
 
   // ── Global validation pipe ───────────────────────────────────────────────
@@ -84,12 +110,14 @@ async function bootstrap() {
   }
 
   // ── Seed users ───────────────────────────────────────────────────────────
-  const usersService = app.get(UsersService);
-  const adminEmail    = config.get<string>('ADMIN_EMAIL')    ?? 'admin@doclens.ai';
-  const adminPassword = config.get<string>('ADMIN_PASSWORD') ?? 'Admin@1234';
+  // Read credentials from environment — NEVER log the password value
+  const usersService    = app.get(UsersService);
+  const adminEmail      = config.get<string>('ADMIN_EMAIL')    ?? 'admin@doclens.ai';
+  const adminPassword   = config.get<string>('ADMIN_PASSWORD') ?? 'Admin@1234';
   await usersService.seed(adminEmail, adminPassword, 'Admin', 'admin');
   await usersService.seed('demo@doclens.ai', 'Demo@1234', 'Demo User', 'viewer');
-  Logger.log(`🌱 Seed users ready  →  ${adminEmail} / ${adminPassword}`, 'Bootstrap');
+  // Log only the email — NEVER log passwords
+  Logger.log(`🌱 Seed users ready  →  admin=${adminEmail}`, 'Bootstrap');
 
   // ── Listen ───────────────────────────────────────────────────────────────
   await app.listen(port);

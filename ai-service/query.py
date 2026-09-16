@@ -1,197 +1,306 @@
+# ai-service/query.py
+# ─────────────────────────────────────────────────────────────────────────────
+# All public function signatures are UNCHANGED so main.py needs no edits.
+# The implementation now routes through the LangChain pipeline (rag/chain.py)
+# while preserving the existing fallback paths.
+# ─────────────────────────────────────────────────────────────────────────────
+import logging
 import os
-import requests
-import google.generativeai as genai
+from typing import List, Optional, Dict, Any
+
 from vector_store.pg_store import pg_store
 from ingest import get_model, get_reranker
 
-def call_llm(prompt: str, system_message: str = "You are a helpful research assistant.", history: list = None):
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-    if not GEMINI_API_KEY:
-        return "This is a mocked LLM response since GEMINI_API_KEY is not set in the ai-service environment."
+logger = logging.getLogger(__name__)
 
-    llm_model = os.getenv("LLM_MODEL", "gemini-3.6-flash")
-    if llm_model.startswith("google/"):
-        llm_model = llm_model.split("/", 1)[1]
-    if llm_model.endswith(":free"):
-        llm_model = llm_model.replace(":free", "")
 
-    genai.configure(api_key=GEMINI_API_KEY)
-    
+# ── Legacy helper kept for summarise/review (no LangChain needed) ─────────────
+
+def _call_gemini_direct(prompt: str, system_message: str = "You are a helpful research assistant.") -> str:
+    """
+    Direct Gemini call for simple tasks (summarise, review) that don't need
+    the full RAG chain. Kept for backward compatibility.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return "GEMINI_API_KEY is not configured. Please set it in your environment."
+
+    model_name = os.getenv("LLM_MODEL", "gemini-1.5-flash").replace("google/", "").replace(":free", "")
+
     try:
-        model = genai.GenerativeModel(
-            model_name=llm_model,
-            system_instruction=system_message
-        )
-        
-        if history:
-            formatted_history = []
-            for msg in history:
-                formatted_history.append({
-                    "role": "user" if msg["role"] == "user" else "model",
-                    "parts": [{"text": msg["content"]}]
-                })
-            chat = model.start_chat(history=formatted_history)
-            response = chat.send_message(prompt)
-        else:
-            response = model.generate_content(prompt)
-            
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model_name=model_name, system_instruction=system_message)
+        response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"Error calling Gemini LLM: {str(e)}"
+        logger.error("Gemini direct call failed: %s", e)
+        return f"LLM call failed: {e}"
 
-def format_citations(chunks):
-    citations = []
+
+def _retrieve_and_rerank(query: str, collection_id: str, document_ids: list, top_k: int, rerank_top: int = 40) -> list:
+    """Shared retrieval + BGE reranking for non-chain functions."""
+    model = get_model()
+    query_embedding = model.encode(query).tolist()
+    chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=rerank_top)
+    if chunks:
+        reranker = get_reranker()
+        pairs = [[query, c["content"]] for c in chunks]
+        scores = reranker.predict(pairs)
+        for i, chunk in enumerate(chunks):
+            chunk["score"] = float(scores[i])
+        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
+    return chunks
+
+
+def _format_citations_legacy(chunks: list) -> tuple[str, list]:
+    """Format chunks into legacy citation format for backward compatibility."""
     context_text = ""
+    citations = []
     for i, c in enumerate(chunks):
-        context_text += f"\n[Citation {i+1}]: {c['content']}\n"
+        context_text += f"\n[Citation {i + 1}]: {c['content']}\n"
         citations.append({
-            "chunkId": c["id"],
+            "chunkId":    c["id"],
             "documentId": c["documentId"],
             "pageNumber": c["pageNumber"],
             "sourceText": c["content"],
-            "relevance": c.get("score")
+            "relevance":  c.get("score"),
         })
     return context_text, citations
 
-def ask_question(question: str, collection_id: str, document_ids=None, top_k=10, history=None):
-    model = get_model()
-    query_embedding = model.encode(question).tolist()
-    
-    chunks = pg_store.search(question, query_embedding, collection_id, document_ids, top_k=40)
-    
-    if chunks:
-        reranker = get_reranker()
-        pairs = [[question, c["content"]] for c in chunks]
-        scores = reranker.predict(pairs)
-        for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
-        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
-    
-    if not chunks:
-        return {"answer": "No relevant context found to answer the question.", "citations": []}
-        
-    context_text, citations = format_citations(chunks)
-    
-    prompt = f"""Answer the user's question based strictly on the provided context. 
 
-Provide a highly detailed, comprehensive, and well-structured response, explaining the concepts thoroughly just like a standard advanced generative AI assistant would.
-If the context contains sentence fragments (e.g., words broken across lines like "- tively"), you must synthesize them into complete, grammatically correct sentences in your answer. Do not copy-paste fragments verbatim.
-**IMPORTANT:** Treat synonymous concepts as equivalent. For example, if the user asks for "accuracy", and the text provides a "detection percentage", "success rate", or "performance rate", you MUST provide that information instead of claiming the text doesn't mention accuracy.
+# ── ask_question — now uses full LangChain pipeline ───────────────────────────
 
-Context:
-{context_text}
+def ask_question(
+    question: str,
+    collection_id: str,
+    document_ids: Optional[List[str]] = None,
+    top_k: int = 10,
+    history: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Main Q&A endpoint. Uses the LangChain RAG chain.
+    Returns format compatible with existing NestJS QueryService expectations.
+    """
+    from rag.chain import DocLensRAGChain
 
-Question: {question}"""
-    system_msg = "You are DocLens AI, a friendly, conversational, and highly intelligent research assistant with a witty and engaging personality. You must ALWAYS answer in complete, grammatically correct sentences. Provide detailed, comprehensive answers that thoroughly explain the concepts based on the documents, synthesizing information rather than just copy-pasting raw document chunks."
-    
-    answer = call_llm(prompt, system_message=system_msg, history=history)
-    
+    logger.info(
+        "ask_question: question=%r collection=%s doc_ids=%s top_k=%d history_len=%d",
+        question[:60],
+        collection_id,
+        document_ids,
+        top_k,
+        len(history or []),
+    )
+
+    try:
+        chain = DocLensRAGChain.create(
+            collection_id=collection_id,
+            document_ids=document_ids,
+            top_k=top_k,
+        )
+        result = chain.invoke(question=question, history=history or [])
+    except Exception as e:
+        logger.error("LangChain RAG chain failed: %s — falling back to legacy path", e)
+        # Fallback: direct Gemini without LangChain
+        chunks = _retrieve_and_rerank(question, collection_id, document_ids, top_k)
+        if not chunks:
+            return {
+                "answer":               "No relevant evidence found in the uploaded documents.",
+                "citations":            [],
+                "insufficient_evidence": True,
+            }
+        context_text, citations = _format_citations_legacy(chunks)
+        prompt = (
+            f"Answer strictly based on the context.\n\nContext:\n{context_text}\n\nQuestion: {question}"
+        )
+        answer = _call_gemini_direct(prompt)
+        return {
+            "answer":               answer,
+            "citations":            citations,
+            "insufficient_evidence": False,
+        }
+
+    # Convert StructuredAnswer → legacy response format (NestJS expects this shape)
+    citations_out = []
+    for cit in result.citations:
+        citations_out.append({
+            "chunkId":     cit.chunk_id,
+            "documentId":  cit.document_id,
+            "pageNumber":  cit.page_number,
+            "sourceText":  cit.source_text,
+            "relevance":   cit.relevance,
+        })
+
+    claims_out = []
+    for claim in result.claims:
+        claims_out.append({
+            "claimText":  claim.claim_text,
+            "verified":   claim.verified,
+            "supportedBy": [c.chunk_id for c in claim.supported_by],
+        })
+
     return {
-        "answer": answer,
-        "citations": citations
+        "answer":                result.answer,
+        "citations":             citations_out,
+        "claims":                claims_out,
+        "insufficient_evidence": result.insufficient_evidence,
+        "confidence":            result.confidence,
+        "query_was_rewritten":   result.query_was_rewritten,
+        "rewritten_query":       result.rewritten_query,
     }
 
-def summarize_document(document_id: str):
-    # Dummy embedding to just get chunks or we can just fetch chunks from DB directly.
-    # To summarize, we'll fetch top chunks that are most central, or just fetch random chunks for now.
-    model = get_model()
+
+# ── summarize_document — unchanged logic ─────────────────────────────────────
+
+def summarize_document(document_id: str) -> Dict[str, Any]:
+    """Summarise a document using its top chunks. No LangChain needed here."""
     query = "summary overview abstract introduction"
-    query_embedding = model.encode(query).tolist()
-    chunks = pg_store.search(query, query_embedding, None, [document_id], top_k=40)
-    
-    if chunks:
-        reranker = get_reranker()
-        pairs = [[query, c["content"]] for c in chunks]
-        scores = reranker.predict(pairs)
-        for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
-        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:10]
-    
+    chunks = _retrieve_and_rerank(query, collection_id=None, document_ids=[document_id], top_k=10)
+
     if not chunks:
-         return {"summary": "No text found for this document to summarize."}
-         
-    context_text, _ = format_citations(chunks)
-    prompt = f"Summarize the following excerpts from a document:\n\n{context_text}"
-    
-    summary = call_llm(prompt, "You are an expert summarizer.")
+        return {"summary": "No text found for this document to summarize."}
+
+    context_text, _ = _format_citations_legacy(chunks)
+    prompt = f"Summarize the following document excerpts:\n\n{context_text}"
+    summary = _call_gemini_direct(prompt, "You are an expert summarizer.")
     return {"summary": summary}
 
-def review_document(document_id: str):
-    model = get_model()
+
+# ── review_document — unchanged logic ────────────────────────────────────────
+
+def review_document(document_id: str) -> Dict[str, Any]:
+    """Critical review of a document. No LangChain needed here."""
     query = "conclusion findings limitations future work"
-    query_embedding = model.encode(query).tolist()
-    chunks = pg_store.search(query, query_embedding, None, [document_id], top_k=40)
-    
-    if chunks:
-        reranker = get_reranker()
-        pairs = [[query, c["content"]] for c in chunks]
-        scores = reranker.predict(pairs)
-        for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
-        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:10]
-    
+    chunks = _retrieve_and_rerank(query, collection_id=None, document_ids=[document_id], top_k=10)
+
     if not chunks:
-         return {"review": "No text found for this document to review."}
-         
-    context_text, _ = format_citations(chunks)
-    prompt = f"Provide a critical review and analysis of the following document excerpts:\n\n{context_text}"
-    
-    review = call_llm(prompt, "You are a critical academic reviewer.")
+        return {"review": "No text found for this document to review."}
+
+    context_text, _ = _format_citations_legacy(chunks)
+    prompt = f"Provide a critical review of the following document excerpts:\n\n{context_text}"
+    review = _call_gemini_direct(prompt, "You are a critical academic reviewer.")
     return {"review": review}
 
-def compare_documents(document_ids, collection_id, question, top_k=12):
-    query = question if question else "Compare the main findings, methodologies, and conclusions."
-    model = get_model()
-    query_embedding = model.encode(query).tolist()
-    
-    chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=40)
-    
-    if chunks:
-        reranker = get_reranker()
-        pairs = [[query, c["content"]] for c in chunks]
-        scores = reranker.predict(pairs)
-        for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
-        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
-    
-    if not chunks:
-        return {"answer": "No relevant context found to compare.", "citations": []}
-        
-    context_text, citations = format_citations(chunks)
-    prompt = f"Compare the documents based on the following excerpts. Ensure you address this query: '{query}'\n\nContext:\n{context_text}"
-    
-    answer = call_llm(prompt, "You are an expert academic research assistant comparing papers.")
-    
-    return {
-        "answer": answer,
-        "citations": citations
-    }
 
-def literature_review(collection_id, document_ids, topic):
-    query = topic if topic else "Comprehensive literature review"
-    model = get_model()
-    query_embedding = model.encode(query).tolist()
-    
-    chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=40)
-    
-    if chunks:
-        reranker = get_reranker()
-        pairs = [[query, c["content"]] for c in chunks]
-        scores = reranker.predict(pairs)
-        for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
-        chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:15]
-    
-    if not chunks:
-        return {"review": "No relevant context found."}
-        
-    context_text, _ = format_citations(chunks)
-    prompt = f"Write a comprehensive literature review on the topic: '{query}' based ONLY on the following excerpts. Synthesize the information clearly.\n\nContext:\n{context_text}"
-    
-    review = call_llm(prompt, "You are an expert academic writer.")
-    
-    return {
-        "review": review
-    }
+# ── compare_documents — now uses LangChain structured output ─────────────────
+
+def compare_documents(
+    document_ids: List[str],
+    collection_id: Optional[str],
+    question: Optional[str],
+    top_k: int = 12,
+) -> Dict[str, Any]:
+    """Paper comparison using LangChain structured output."""
+    from rag.chain import run_comparison_chain
+
+    query = question or "Compare the main findings, methodologies, and conclusions."
+
+    try:
+        result = run_comparison_chain(
+            document_ids=document_ids,
+            collection_id=collection_id,
+            question=query,
+            top_k=top_k,
+        )
+
+        citations_out = [
+            {
+                "chunkId":    c.chunk_id,
+                "documentId": c.document_id,
+                "pageNumber": c.page_number,
+                "sourceText": c.source_text,
+                "relevance":  c.relevance,
+            }
+            for c in result.citations
+        ]
+
+        return {
+            "answer":                result.narrative,
+            "narrative":             result.narrative,
+            "methods":               result.methods,
+            "datasets":              result.datasets,
+            "strengths":             result.strengths,
+            "weaknesses":            result.weaknesses,
+            "findings":              result.findings,
+            "futureWork":            result.future_work,
+            "citations":             citations_out,
+            "insufficient_evidence": result.insufficient_evidence,
+        }
+    except Exception as e:
+        logger.error("compare_documents LangChain failed: %s — falling back", e)
+        # Fallback to direct Gemini
+        chunks = _retrieve_and_rerank(query, collection_id, document_ids, top_k)
+        if not chunks:
+            return {"answer": "No relevant context found to compare.", "citations": []}
+        context_text, citations = _format_citations_legacy(chunks)
+        prompt = f"Compare the documents. Query: '{query}'\n\nContext:\n{context_text}"
+        answer = _call_gemini_direct(prompt, "You are an expert academic researcher comparing papers.")
+        return {"answer": answer, "citations": citations}
+
+
+# ── literature_review — now uses LangChain structured output ─────────────────
+
+def literature_review(
+    collection_id: Optional[str],
+    document_ids: Optional[List[str]],
+    topic: Optional[str],
+) -> Dict[str, Any]:
+    """Literature review using LangChain structured output."""
+    from rag.chain import run_literature_review_chain
+
+    topic = topic or "Comprehensive literature review"
+
+    try:
+        result = run_literature_review_chain(
+            collection_id=collection_id,
+            document_ids=document_ids,
+            topic=topic,
+        )
+
+        citations_out = [
+            {
+                "chunkId":    c.chunk_id,
+                "documentId": c.document_id,
+                "pageNumber": c.page_number,
+                "sourceText": c.source_text,
+                "relevance":  c.relevance,
+            }
+            for c in (result.citations or [])
+        ]
+
+        # Convert sections dict to the shape NestJS QueryService expects
+        sections_out = {}
+        for key, section in result.sections.items():
+            sections_out[key] = {
+                "heading":   section.heading,
+                "content":   section.content,
+                "citations": [
+                    {
+                        "chunkId":    c.chunk_id,
+                        "documentId": c.document_id,
+                        "pageNumber": c.page_number,
+                        "sourceText": c.source_text,
+                        "relevance":  c.relevance,
+                    }
+                    for c in (section.citations or [])
+                ],
+            }
+
+        return {
+            "title":                 result.title,
+            "topic":                 result.topic,
+            "sections":              sections_out,
+            "markdown":              result.markdown,
+            "citations":             citations_out,
+            "insufficient_evidence": result.insufficient_evidence,
+        }
+    except Exception as e:
+        logger.error("literature_review LangChain failed: %s — falling back", e)
+        chunks = _retrieve_and_rerank(topic, collection_id, document_ids, 15)
+        if not chunks:
+            return {"review": "No relevant context found."}
+        context_text, _ = _format_citations_legacy(chunks)
+        prompt = f"Write a literature review on '{topic}':\n\n{context_text}"
+        review = _call_gemini_direct(prompt, "You are an expert academic writer.")
+        return {"review": review}

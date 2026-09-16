@@ -1,4 +1,5 @@
 services:
+  # ── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     ports:
@@ -12,8 +13,7 @@ services:
       timeout: 5s
       retries: 10
 
-
-
+  # ── Database migration (runs prisma migrate deploy, exits on success) ──────
   backend-migrate:
     build:
       context: ./backend
@@ -23,6 +23,7 @@ services:
     command: ["npx", "prisma", "migrate", "deploy"]
     restart: "no"
 
+  # ── NestJS backend ────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -31,10 +32,13 @@ services:
       PORT: 3001
       DATABASE_URL: ${DATABASE_URL}
       REDIS_URL: redis://redis:6379
-      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-change-this-in-production}
-      JWT_SECRET: ${JWT_SECRET:-change-this-jwt-secret}
-      JWT_EXPIRES_IN: 7d
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      # Inter-container URL for AI service — never use localhost here
+      AI_SERVICE_URL: http://ai-service:8000
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # CORS: allow any origin (nginx fronts the app; set a specific list for production)
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@doclens.ai}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@1234}
       NESTJS_CALLBACK_URL: http://backend:3001/api/v1/internal/ai-callback
@@ -45,15 +49,43 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-
       backend-migrate:
         condition: service_completed_successfully
+      ai-service:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/v1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 20s
       timeout: 10s
       retries: 20
 
+  # ── FastAPI AI service ────────────────────────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      LLM_MODEL: ${LLM_MODEL:-gemini-1.5-flash}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist downloaded HuggingFace models across container restarts.
+      # Without this volume, BAAI/bge-m3 and BAAI/bge-reranker-v2-m3
+      # (~3-4 GB each) would be re-downloaded on every docker compose up.
+      - huggingface-cache:/root/.cache/huggingface
+      - backend-uploads:/app/uploads:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      # Long start period: first startup downloads large models
+      start_period: 180s
+      retries: 5
+
+  # ── Nginx / React frontend ────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -66,3 +98,4 @@ services:
 volumes:
   redis-data:
   backend-uploads:
+  huggingface-cache:

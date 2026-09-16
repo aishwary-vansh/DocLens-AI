@@ -1,14 +1,31 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
-fastapi
-uvicorn
-docling
-pymupdf
-sentence-transformers
-torch
-psycopg2-binary
-pgvector
-requests
-python-dotenv
-pydantic
-google-generativeai
+# ── Web framework ─────────────────────────────────────────────────────────────
+fastapi>=0.111.0,<0.115.0
+uvicorn[standard]>=0.30.0,<0.32.0
+
+# ── Document parsing ──────────────────────────────────────────────────────────
+docling>=2.0.0
+pymupdf>=1.24.0
+
+# ── Embeddings + reranking ────────────────────────────────────────────────────
+sentence-transformers>=3.0.0,<4.0.0
+torch>=2.3.0,<3.0.0
+
+# ── PostgreSQL + pgvector ─────────────────────────────────────────────────────
+psycopg2-binary>=2.9.0
+pgvector>=0.3.0
+
+# ── LangChain orchestration ───────────────────────────────────────────────────
+langchain>=0.3.0,<0.4.0
+langchain-core>=0.3.0,<0.4.0
+langchain-google-genai>=2.0.0,<3.0.0
+langchain-community>=0.3.0,<0.4.0
+
+# ── Pydantic v2 structured outputs ───────────────────────────────────────────
+pydantic>=2.7.0,<3.0.0
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+requests>=2.32.0
+python-dotenv>=1.0.0
+google-generativeai>=0.8.0,<1.0.0

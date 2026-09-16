@@ -15,9 +15,25 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // Dev-server proxy: mirrors the nginx proxy so relative URLs work the same
+  // in local dev (npm run dev) as they do inside the Docker container.
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/ai': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/ai/, ''),
+      },
+    },
+  },
   preview: {
-  host: true,
-  port:4173,
-  allowedHosts: true
-}
+    host: true,
+    port: 4173,
+    allowedHosts: true,
+  },
 })
+

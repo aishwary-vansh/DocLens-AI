@@ -108,7 +108,7 @@ model DocumentChunk {
   metadata    Json?
   createdAt   DateTime @default(now())
 
-  // PgVector — 1024 dims (jina-embeddings-v5-text-small). Managed via raw migration SQL.
+  // PgVector — 1024 dims for BAAI/bge-m3. Managed via raw migration SQL.
   embedding   Unsupported("vector(1024)")?
 
   documentId String

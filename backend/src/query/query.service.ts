@@ -659,6 +659,28 @@ export class QueryService {
     topK = 5,
     documentIds?: string[],
   ): Promise<Evidence[]> {
+    if (documentIds?.length && userId) {
+      const allowed = await this.prisma.document.count({
+        where: {
+          id: { in: documentIds },
+          collectionId,
+          collection: { workspace: { userId } },
+        },
+      });
+      if (allowed !== documentIds.length) {
+        throw new ForbiddenException('One or more selected papers are not accessible.');
+      }
+    }
+
+    try {
+      const raw = await this.ai.search(query, collectionId, Math.max(topK, 8), 'vector', documentIds);
+      const results = Array.isArray(raw) ? raw : raw?.results ?? [];
+      const evidence = this.evidenceFromAiResults(results, topK);
+      if (evidence.length) return evidence;
+    } catch (err: any) {
+      this.logger.warn('AI hybrid retrieval failed; falling back to local keyword ranking: %s', err.message);
+    }
+
     const chunks = await this.prisma.documentChunk.findMany({
       where: {
         content: { not: '' },
@@ -674,6 +696,21 @@ export class QueryService {
     });
 
     return this.rankChunks(query, chunks, topK);
+  }
+
+  private evidenceFromAiResults(results: any[], topK: number): Evidence[] {
+    return results
+      .map((item) => ({
+        chunkId: item.chunkId ?? item.chunk_id ?? item.id,
+        documentId: item.documentId ?? item.document_id,
+        documentTitle: item.documentTitle ?? item.document_title ?? 'Untitled paper',
+        pageNumber: item.pageNumber ?? item.page_number,
+        chunkIndex: item.chunkIndex ?? item.chunk_index ?? 0,
+        chunk: this.snippet(item.chunk ?? item.chunk_text ?? item.content ?? item.sourceText ?? '', 850),
+        score: Number(item.score ?? item.relevance ?? 0.8),
+      }))
+      .filter((item) => item.chunkId && item.documentId && item.chunk)
+      .slice(0, topK);
   }
 
   private async retrieveEvidenceForDocuments(
@@ -827,22 +864,28 @@ export class QueryService {
     const citations: CitationDto[] = [];
 
     for (const citation of raw) {
+      const chunkId = citation.chunk_id ?? citation.chunkId;
       const documentId = citation.document_id ?? citation.documentId;
       const chunkIndex = citation.chunk_index ?? citation.chunkIndex;
-      if (!documentId || chunkIndex === undefined) continue;
+      if (!chunkId && (!documentId || chunkIndex === undefined)) continue;
 
-      const chunk = await this.prisma.documentChunk.findUnique({
-        where: { documentId_chunkIndex: { documentId, chunkIndex } },
-        include: { document: true },
-      });
+      const chunk = chunkId
+        ? await this.prisma.documentChunk.findUnique({
+            where: { id: chunkId },
+            include: { document: true },
+          })
+        : await this.prisma.documentChunk.findUnique({
+            where: { documentId_chunkIndex: { documentId, chunkIndex } },
+            include: { document: true },
+          });
       if (!chunk) continue;
 
       citations.push({
         chunkId: chunk.id,
-        documentId,
+        documentId: chunk.documentId,
         documentTitle: citation.document_title ?? citation.documentTitle ?? chunk.document.title,
         pageNumber: citation.page_number ?? citation.pageNumber ?? chunk.pageNumber,
-        chunkIndex,
+        chunkIndex: chunk.chunkIndex,
         chunk: citation.chunk_text ?? citation.chunk ?? this.snippet(chunk.content, 850),
         score: Number(citation.score ?? 0.8),
         retrievalPath: citation.retrieval_path ?? citation.retrievalPath ?? ['vector'],

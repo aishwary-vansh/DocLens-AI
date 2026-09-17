@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import List, Optional
 
 from langchain_core.documents import Document as LCDocument
@@ -18,6 +19,13 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from pydantic import model_validator
 
 logger = logging.getLogger(__name__)
+
+
+def _sigmoid_score(value: float) -> float:
+    try:
+        return 1.0 / (1.0 + math.exp(-float(value)))
+    except OverflowError:
+        return 0.0 if value < 0 else 1.0
 
 
 class DocLensRetriever(BaseRetriever):
@@ -90,7 +98,7 @@ class DocLensRetriever(BaseRetriever):
         )
 
         # Step 1 — embed query
-        query_embedding = self._embed_model.encode(query).tolist()
+        query_embedding = self._embed_model.encode(query, normalize_embeddings=True).tolist()
 
         # Step 2 — existing RRF hybrid search (SQL unchanged)
         candidates = self._pg_store.search(
@@ -109,7 +117,7 @@ class DocLensRetriever(BaseRetriever):
         pairs = [[query, c["content"]] for c in candidates]
         scores = self._reranker.predict(pairs)
         for i, chunk in enumerate(candidates):
-            chunk["rerank_score"] = float(scores[i])
+            chunk["rerank_score"] = _sigmoid_score(float(scores[i]))
         candidates = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)[: self.top_k]
 
         logger.info("DocLensRetriever: returning %d reranked chunks", len(candidates))
@@ -123,6 +131,7 @@ class DocLensRetriever(BaseRetriever):
                     metadata={
                         "chunk_id":      chunk["id"],
                         "document_id":   chunk["documentId"],
+                        "document_title": chunk.get("documentTitle", ""),
                         "page_number":   chunk.get("pageNumber"),
                         "chunk_index":   chunk.get("chunkIndex"),
                         "score":         chunk["rerank_score"],

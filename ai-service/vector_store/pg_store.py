@@ -1,14 +1,51 @@
-import os
-import psycopg2
-import uuid
+import hashlib
 import json
 import logging
-from pgvector.psycopg2 import register_vector
+import os
+import uuid
+from typing import Any, Iterable, Optional
+
+import psycopg2
 from dotenv import load_dotenv
+from pgvector.psycopg2 import register_vector
+from psycopg2.extras import Json
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+BGE_M3_DIMENSIONS = 1024
+VALID_ENTITY_TYPES = {"AUTHOR", "CONCEPT", "DATASET", "METHOD", "METRIC", "MODEL", "PAPER"}
+VALID_RELATIONSHIP_TYPES = {
+    "USES",
+    "EVALUATED_ON",
+    "REPORTS",
+    "COMPARED_WITH",
+    "BASED_ON",
+    "RELATED_TO",
+    "AUTHORED_BY",
+    "HAS_CONCEPT",
+    "HAS_METHOD",
+    "HAS_DATASET",
+    "HAS_METRIC",
+    "HAS_MODEL",
+}
+
+
+def _json_dict(value: Any) -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _normalise_name(value: str) -> str:
+    return " ".join((value or "").strip().lower().split()).replace(" ", "_")
 
 
 class PgStore:
@@ -22,41 +59,7 @@ class PgStore:
         register_vector(conn)
         return conn
 
-    # ── Chunks ────────────────────────────────────────────────────────────────
-
-    def insert_chunks(self, chunks, document_id):
-        """
-        chunks: list of dicts with keys: content, chunkIndex, pageNumber, embedding
-        Existing logic preserved unchanged.
-        """
-        conn = self.get_connection()
-        try:
-            with conn.cursor() as cur:
-                for chunk in chunks:
-                    chunk_id = str(uuid.uuid4())
-                    cur.execute(
-                        """
-                        INSERT INTO "DocumentChunk" (id, "documentId", "chunkIndex", content, "pageNumber", embedding, metadata, "createdAt")
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                        ON CONFLICT ("documentId", "chunkIndex") DO UPDATE SET
-                        content = EXCLUDED.content,
-                        embedding = EXCLUDED.embedding,
-                        "pageNumber" = EXCLUDED."pageNumber",
-                        metadata = EXCLUDED.metadata
-                        """,
-                        (
-                            chunk_id,
-                            document_id,
-                            chunk['chunkIndex'],
-                            chunk['content'],
-                            chunk.get('pageNumber'),
-                            chunk['embedding'],
-                            json.dumps(chunk.get('metadata', {})),
-                        ),
-                    )
-            conn.commit()
-        finally:
-            conn.close()
+    # -- Document metadata -------------------------------------------------
 
     def get_document_title(self, document_id: str) -> str:
         conn = self.get_connection()
@@ -68,8 +71,167 @@ class PgStore:
         finally:
             conn.close()
 
+    def get_document_collection_id(self, document_id: str) -> Optional[str]:
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SELECT "collectionId" FROM "Document" WHERE id = %s', (document_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+        finally:
+            conn.close()
+
+    def update_document_ingest_metadata(self, document_id: str, metadata: dict) -> None:
+        """Merge extraction metadata into Document.metadata and update page count/title."""
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'SELECT title, "pageCount", metadata FROM "Document" WHERE id = %s',
+                    (document_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    logger.warning("Document %s not found while updating metadata", document_id)
+                    return
+
+                existing_title, _, existing_metadata = row
+                merged = {**_json_dict(existing_metadata), **metadata}
+                title = (metadata.get("title") or "").strip()
+
+                updates = ['metadata = %s']
+                params: list[Any] = [Json(merged)]
+
+                if metadata.get("page_count"):
+                    updates.append('"pageCount" = %s')
+                    params.append(int(metadata["page_count"]))
+
+                if title and title.lower() not in {"untitled", "unknown"} and title != existing_title:
+                    updates.append("title = %s")
+                    params.append(title[:500])
+
+                params.append(document_id)
+                cur.execute(
+                    f'UPDATE "Document" SET {", ".join(updates)} WHERE id = %s',
+                    tuple(params),
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    # -- Chunks ------------------------------------------------------------
+
+    def insert_chunks(self, chunks: list[dict], document_id: str):
+        """
+        Upsert chunks and BGE-M3 embeddings into PostgreSQL/pgvector.
+
+        Each chunk must include: content, chunkIndex, pageNumber, embedding, metadata.
+        The method also keeps EmbeddingMetadata in sync for citation tracing.
+        """
+        collection_id = self.get_document_collection_id(document_id)
+        if not collection_id:
+            raise ValueError(f"Document {document_id} was not found")
+
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                chunk_indexes = [int(chunk["chunkIndex"]) for chunk in chunks]
+                if chunk_indexes:
+                    cur.execute(
+                        """
+                        DELETE FROM "DocumentChunk"
+                        WHERE "documentId" = %s
+                          AND NOT ("chunkIndex" = ANY(%s))
+                        """,
+                        (document_id, chunk_indexes),
+                    )
+
+                for chunk in chunks:
+                    content = chunk["content"].strip()
+                    embedding = chunk.get("embedding")
+                    if not content or not embedding:
+                        continue
+                    if len(embedding) != BGE_M3_DIMENSIONS:
+                        raise ValueError(
+                            f"Expected {BGE_M3_DIMENSIONS}-dimensional BGE-M3 embedding, "
+                            f"got {len(embedding)}"
+                        )
+
+                    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    token_count = max(1, len(content.split()))
+
+                    cur.execute(
+                        """
+                        INSERT INTO "DocumentChunk" (
+                            id, "documentId", "chunkIndex", content, "pageNumber",
+                            embedding, metadata, "tokenCount", "contentHash", "createdAt"
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT ("documentId", "chunkIndex") DO UPDATE SET
+                            content = EXCLUDED.content,
+                            embedding = EXCLUDED.embedding,
+                            "pageNumber" = EXCLUDED."pageNumber",
+                            metadata = EXCLUDED.metadata,
+                            "tokenCount" = EXCLUDED."tokenCount",
+                            "contentHash" = EXCLUDED."contentHash"
+                        RETURNING id
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            document_id,
+                            int(chunk["chunkIndex"]),
+                            content,
+                            chunk.get("pageNumber"),
+                            embedding,
+                            Json(chunk.get("metadata", {})),
+                            token_count,
+                            content_hash,
+                        ),
+                    )
+                    saved_chunk_id = cur.fetchone()[0]
+                    vector_id = f"pgvector:{saved_chunk_id}"
+
+                    cur.execute(
+                        """
+                        INSERT INTO "EmbeddingMetadata" (
+                            id, "modelName", dimensions, "similarityMetric",
+                            "vectorStore", "vectorId", "collectionId",
+                            "chunkId", "documentId", "createdAt"
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT ("chunkId") DO UPDATE SET
+                            "modelName" = EXCLUDED."modelName",
+                            dimensions = EXCLUDED.dimensions,
+                            "similarityMetric" = EXCLUDED."similarityMetric",
+                            "vectorStore" = EXCLUDED."vectorStore",
+                            "vectorId" = EXCLUDED."vectorId",
+                            "collectionId" = EXCLUDED."collectionId",
+                            "documentId" = EXCLUDED."documentId"
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            "BAAI/bge-m3",
+                            BGE_M3_DIMENSIONS,
+                            "cosine",
+                            "pgvector",
+                            vector_id,
+                            collection_id,
+                            saved_chunk_id,
+                            document_id,
+                        ),
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def get_document_chunks(self, document_id: str) -> list:
-        """Return all chunks for a document (used by KG extraction and evaluation)."""
+        """Return all chunks for a document, used by KG extraction and evaluation."""
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
@@ -85,136 +247,184 @@ class PgStore:
                 rows = cur.fetchall()
                 return [
                     {
-                        "id":         row[0],
+                        "id": row[0],
                         "documentId": row[1],
                         "chunkIndex": row[2],
-                        "content":    row[3],
+                        "content": row[3],
                         "pageNumber": row[4],
-                        "metadata":   row[5] or {},
+                        "metadata": _json_dict(row[5]),
                     }
                     for row in rows
                 ]
         finally:
             conn.close()
 
-    # ── Hybrid RRF Search (UNCHANGED) ─────────────────────────────────────────
+    # -- Hybrid RRF search -------------------------------------------------
 
-    def search(self, query: str, query_embedding: list, collection_id: str, document_ids=None, top_k=40):
+    def search(
+        self,
+        query: str,
+        query_embedding: list,
+        collection_id: Optional[str],
+        document_ids: Optional[list[str]] = None,
+        top_k: int = 40,
+    ) -> list:
+        """Hybrid semantic + lexical retrieval with Reciprocal Rank Fusion."""
+        if len(query_embedding) != BGE_M3_DIMENSIONS:
+            raise ValueError(
+                f"Expected {BGE_M3_DIMENSIONS}-dimensional query embedding, got {len(query_embedding)}"
+            )
+
+        filter_params: tuple[Any, ...]
+        if document_ids:
+            base_filter = 'WHERE d.id = ANY(%s)'
+            filter_params = (document_ids,)
+        elif collection_id:
+            base_filter = 'WHERE d."collectionId" = %s'
+            filter_params = (collection_id,)
+        else:
+            base_filter = "WHERE TRUE"
+            filter_params = ()
+
+        semantic_filter = f"{base_filter} AND c.embedding IS NOT NULL"
+
+        sql = f"""
+        WITH semantic_search AS (
+            SELECT
+                c.id,
+                c."documentId",
+                d.title AS "documentTitle",
+                c."chunkIndex",
+                c.content,
+                c."pageNumber",
+                RANK() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
+            FROM "DocumentChunk" c
+            JOIN "Document" d ON c."documentId" = d.id
+            {semantic_filter}
+            ORDER BY c.embedding <=> %s::vector
+            LIMIT 100
+        ),
+        keyword_query AS (
+            SELECT plainto_tsquery('english', %s) AS query
+        ),
+        keyword_search AS (
+            SELECT
+                c.id,
+                c."documentId",
+                d.title AS "documentTitle",
+                c."chunkIndex",
+                c.content,
+                c."pageNumber",
+                RANK() OVER (
+                    ORDER BY ts_rank_cd(to_tsvector('english', c.content), keyword_query.query) DESC
+                ) AS rank
+            FROM "DocumentChunk" c
+            JOIN "Document" d ON c."documentId" = d.id
+            CROSS JOIN keyword_query
+            {base_filter}
+            ORDER BY ts_rank_cd(to_tsvector('english', c.content), keyword_query.query) DESC
+            LIMIT 100
+        )
+        SELECT
+            COALESCE(s.id, k.id) AS id,
+            COALESCE(s."documentId", k."documentId") AS "documentId",
+            COALESCE(s."documentTitle", k."documentTitle") AS "documentTitle",
+            COALESCE(s."chunkIndex", k."chunkIndex") AS "chunkIndex",
+            COALESCE(s.content, k.content) AS content,
+            COALESCE(s."pageNumber", k."pageNumber") AS "pageNumber",
+            COALESCE(1.0 / (60.0 + s.rank), 0.0)
+              + COALESCE(1.0 / (60.0 + k.rank), 0.0) AS score
+        FROM semantic_search s
+        FULL OUTER JOIN keyword_search k ON s.id = k.id
+        ORDER BY score DESC
+        LIMIT %s
         """
-        Hybrid search vector database (BM25 + Dense) using Reciprocal Rank Fusion (RRF).
-        THIS SQL IS UNCHANGED — wrapped by DocLensRetriever in rag/retriever.py.
-        """
+
+        params = (
+            query_embedding,
+            *filter_params,
+            query_embedding,
+            query,
+            *filter_params,
+            top_k,
+        )
+
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
-                if document_ids and len(document_ids) > 0:
-                    where_clause = 'WHERE c."documentId" = ANY(%s)'
-                    params_semantic = (query_embedding, document_ids, query_embedding)
-                    params_keyword = (query, document_ids, query)
-                else:
-                    where_clause = 'JOIN "Document" d ON c."documentId" = d.id WHERE d."collectionId" = %s'
-                    params_semantic = (query_embedding, collection_id, query_embedding)
-                    params_keyword = (query, collection_id, query)
-
-                sql = f"""
-                WITH semantic_search AS (
-                    SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber",
-                    RANK() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
-                    FROM "DocumentChunk" c
-                    {where_clause}
-                    ORDER BY c.embedding <=> %s::vector
-                    LIMIT 100
-                ),
-                keyword_search AS (
-                    SELECT c.id, c."documentId", c."chunkIndex", c.content, c."pageNumber",
-                    RANK() OVER (ORDER BY ts_rank_cd(to_tsvector('english', c.content), plainto_tsquery('english', %s)) DESC) AS rank
-                    FROM "DocumentChunk" c
-                    {where_clause}
-                    ORDER BY ts_rank_cd(to_tsvector('english', c.content), plainto_tsquery('english', %s)) DESC
-                    LIMIT 100
-                )
-                SELECT
-                    COALESCE(s.id, k.id) as id,
-                    COALESCE(s."documentId", k."documentId") as "documentId",
-                    COALESCE(s."chunkIndex", k."chunkIndex") as "chunkIndex",
-                    COALESCE(s.content, k.content) as content,
-                    COALESCE(s."pageNumber", k."pageNumber") as "pageNumber",
-                    COALESCE(1.0 / (60.0 + s.rank), 0.0) + COALESCE(1.0 / (60.0 + k.rank), 0.0) AS score
-                FROM semantic_search s
-                FULL OUTER JOIN keyword_search k ON s.id = k.id
-                ORDER BY score DESC
-                LIMIT %s
-                """
-
-                cur.execute(sql, params_semantic + params_keyword + (top_k,))
+                cur.execute(sql, params)
                 rows = cur.fetchall()
-                results = []
-                for row in rows:
-                    results.append({
-                        "id":         row[0],
+                return [
+                    {
+                        "id": row[0],
                         "documentId": row[1],
-                        "chunkIndex": row[2],
-                        "content":    row[3],
-                        "pageNumber": row[4],
-                        "score":      row[5],
-                    })
-                return results
+                        "documentTitle": row[2],
+                        "chunkIndex": row[3],
+                        "content": row[4],
+                        "pageNumber": row[5],
+                        "score": float(row[6] or 0.0),
+                    }
+                    for row in rows
+                ]
         finally:
             conn.close()
 
-    # ── Knowledge Graph — Entity persistence ─────────────────────────────────
+    # -- Knowledge Graph persistence --------------------------------------
 
-    def insert_entities(self, document_id: str, entities: list) -> None:
-        """
-        Upsert KG entities extracted from a document into the Prisma-managed
-        Entity and DocumentEntity tables.
-
-        entities: list of KGEntity objects (from rag/schemas.py)
-        """
+    def insert_entities(self, document_id: str, entities: Iterable[Any]) -> None:
+        entities = list(entities)
         if not entities:
             return
 
-        # Resolve collection_id for this document
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    'SELECT c."collectionId" FROM "Document" d JOIN "Collection" c ON d."collectionId" = c.id WHERE d.id = %s',
-                    (document_id,),
-                )
+                cur.execute('SELECT "collectionId" FROM "Document" WHERE id = %s', (document_id,))
                 row = cur.fetchone()
                 if not row:
                     logger.warning("insert_entities: document %s not found", document_id)
                     return
                 collection_id = row[0]
 
+                inserted = 0
                 for entity in entities:
                     entity_type = entity.entity_type.upper()
-                    normalized = entity.normalized_name.lower().replace(" ", "_")
-                    entity_id = str(uuid.uuid4())
+                    if entity_type not in VALID_ENTITY_TYPES:
+                        logger.debug("Skipping unsupported entity type: %s", entity_type)
+                        continue
 
-                    # Upsert into Entity table
+                    normalized = _normalise_name(entity.normalized_name or entity.name)
+                    if not normalized:
+                        continue
+
                     cur.execute(
                         """
-                        INSERT INTO "Entity" (id, name, "normalizedName", type, "collectionId", "createdAt", "updatedAt")
+                        INSERT INTO "Entity" (
+                            id, name, "normalizedName", type, "collectionId",
+                            "createdAt", "updatedAt"
+                        )
                         VALUES (%s, %s, %s, %s::"EntityType", %s, NOW(), NOW())
                         ON CONFLICT ("collectionId", "normalizedName", type) DO UPDATE SET
                             name = EXCLUDED.name,
                             "updatedAt" = NOW()
                         RETURNING id
                         """,
-                        (entity_id, entity.name, normalized, entity_type, collection_id),
+                        (str(uuid.uuid4()), entity.name, normalized, entity_type, collection_id),
                     )
-                    returned = cur.fetchone()
-                    actual_entity_id = returned[0] if returned else entity_id
+                    actual_entity_id = cur.fetchone()[0]
 
-                    # Upsert into DocumentEntity (mention tracking)
                     cur.execute(
                         """
-                        INSERT INTO "DocumentEntity" (id, "documentId", "entityId", "mentionCount", pages, confidence, "createdAt")
+                        INSERT INTO "DocumentEntity" (
+                            id, "documentId", "entityId", "mentionCount",
+                            pages, confidence, "createdAt"
+                        )
                         VALUES (%s, %s, %s, %s, %s, %s, NOW())
                         ON CONFLICT ("documentId", "entityId") DO UPDATE SET
-                            "mentionCount" = "DocumentEntity"."mentionCount" + EXCLUDED."mentionCount",
+                            "mentionCount" = GREATEST(
+                                "DocumentEntity"."mentionCount",
+                                EXCLUDED."mentionCount"
+                            ),
                             pages = EXCLUDED.pages,
                             confidence = GREATEST("DocumentEntity".confidence, EXCLUDED.confidence)
                         """,
@@ -227,9 +437,10 @@ class PgStore:
                             entity.confidence,
                         ),
                     )
+                    inserted += 1
 
             conn.commit()
-            logger.info("Inserted %d entities for document %s", len(entities), document_id)
+            logger.info("Inserted/updated %d entities for document %s", inserted, document_id)
         except Exception as e:
             conn.rollback()
             logger.error("insert_entities failed for document %s: %s", document_id, e)
@@ -237,61 +448,62 @@ class PgStore:
         finally:
             conn.close()
 
-    # ── Knowledge Graph — Relationship persistence ────────────────────────────
-
-    def insert_relationships(self, document_id: str, relationships: list) -> None:
-        """
-        Upsert KG relationships into the Prisma-managed Relationship table.
-        Each relationship references source/target Entity rows and optionally
-        an evidence DocumentChunk.
-
-        relationships: list of KGRelationship objects (from rag/schemas.py)
-        """
+    def insert_relationships(self, document_id: str, relationships: Iterable[Any]) -> None:
+        relationships = list(relationships)
         if not relationships:
             return
 
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
-                # Resolve collection_id
-                cur.execute(
-                    'SELECT "collectionId" FROM "Document" WHERE id = %s',
-                    (document_id,),
-                )
+                cur.execute('SELECT "collectionId" FROM "Document" WHERE id = %s', (document_id,))
                 row = cur.fetchone()
                 if not row:
                     return
                 collection_id = row[0]
 
+                cur.execute('DELETE FROM "Relationship" WHERE "documentId" = %s', (document_id,))
+
+                inserted = 0
                 for rel in relationships:
-                    # Look up source and target entity IDs by normalised name + type
-                    src_norm = rel.source_name.lower().replace(" ", "_")
-                    tgt_norm = rel.target_name.lower().replace(" ", "_")
+                    relation_type = rel.relation_type.upper()
+                    if relation_type not in VALID_RELATIONSHIP_TYPES:
+                        relation_type = "RELATED_TO"
+
+                    source_type = rel.source_type.upper()
+                    target_type = rel.target_type.upper()
+                    if source_type not in VALID_ENTITY_TYPES or target_type not in VALID_ENTITY_TYPES:
+                        continue
+
+                    src_norm = _normalise_name(rel.source_name)
+                    tgt_norm = _normalise_name(rel.target_name)
 
                     cur.execute(
                         """
                         SELECT id FROM "Entity"
-                        WHERE "collectionId" = %s AND "normalizedName" = %s AND type = %s::"EntityType"
+                        WHERE "collectionId" = %s
+                          AND "normalizedName" = %s
+                          AND type = %s::"EntityType"
                         LIMIT 1
                         """,
-                        (collection_id, src_norm, rel.source_type.upper()),
+                        (collection_id, src_norm, source_type),
                     )
                     src_row = cur.fetchone()
                     if not src_row:
-                        logger.debug("Relationship source entity not found: %s (%s)", src_norm, rel.source_type)
                         continue
 
                     cur.execute(
                         """
                         SELECT id FROM "Entity"
-                        WHERE "collectionId" = %s AND "normalizedName" = %s AND type = %s::"EntityType"
+                        WHERE "collectionId" = %s
+                          AND "normalizedName" = %s
+                          AND type = %s::"EntityType"
                         LIMIT 1
                         """,
-                        (collection_id, tgt_norm, rel.target_type.upper()),
+                        (collection_id, tgt_norm, target_type),
                     )
                     tgt_row = cur.fetchone()
                     if not tgt_row:
-                        logger.debug("Relationship target entity not found: %s (%s)", tgt_norm, rel.target_type)
                         continue
 
                     cur.execute(
@@ -302,23 +514,23 @@ class PgStore:
                             "documentId", "evidenceChunkId", "createdAt"
                         )
                         VALUES (%s, %s::"RelationshipType", %s, %s, %s, %s, %s, %s, %s, NOW())
-                        ON CONFLICT DO NOTHING
                         """,
                         (
                             str(uuid.uuid4()),
-                            rel.relation_type.upper(),
+                            relation_type,
                             collection_id,
                             rel.confidence,
-                            json.dumps({"evidence_text": rel.evidence_text} if rel.evidence_text else {}),
+                            Json({"evidence_text": rel.evidence_text} if rel.evidence_text else {}),
                             src_row[0],
                             tgt_row[0],
                             document_id,
                             rel.evidence_chunk_id,
                         ),
                     )
+                    inserted += 1
 
             conn.commit()
-            logger.info("Inserted %d relationships for document %s", len(relationships), document_id)
+            logger.info("Inserted %d relationships for document %s", inserted, document_id)
         except Exception as e:
             conn.rollback()
             logger.error("insert_relationships failed for document %s: %s", document_id, e)
@@ -326,10 +538,9 @@ class PgStore:
         finally:
             conn.close()
 
-    # ── Knowledge Graph — Read methods ────────────────────────────────────────
+    # -- Knowledge Graph read methods -------------------------------------
 
     def get_entities(self, collection_id: str, entity_type: str = None, limit: int = 60) -> list:
-        """Read entities for a collection, optionally filtered by type."""
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
@@ -337,8 +548,8 @@ class PgStore:
                     cur.execute(
                         """
                         SELECT e.id, e.name, e."normalizedName", e.type, e."collectionId",
-                               COUNT(de."documentId") as doc_count,
-                               SUM(de."mentionCount") as total_mentions
+                               COUNT(de."documentId") AS doc_count,
+                               SUM(de."mentionCount") AS total_mentions
                         FROM "Entity" e
                         LEFT JOIN "DocumentEntity" de ON de."entityId" = e.id
                         WHERE e."collectionId" = %s AND e.type = %s::"EntityType"
@@ -352,8 +563,8 @@ class PgStore:
                     cur.execute(
                         """
                         SELECT e.id, e.name, e."normalizedName", e.type, e."collectionId",
-                               COUNT(de."documentId") as doc_count,
-                               SUM(de."mentionCount") as total_mentions
+                               COUNT(de."documentId") AS doc_count,
+                               SUM(de."mentionCount") AS total_mentions
                         FROM "Entity" e
                         LEFT JOIN "DocumentEntity" de ON de."entityId" = e.id
                         WHERE e."collectionId" = %s
@@ -366,13 +577,13 @@ class PgStore:
                 rows = cur.fetchall()
                 return [
                     {
-                        "id":              row[0],
-                        "name":            row[1],
-                        "normalizedName":  row[2],
-                        "type":            row[3],
-                        "collectionId":    row[4],
-                        "documentCount":   row[5] or 0,
-                        "totalMentions":   int(row[6] or 0),
+                        "id": row[0],
+                        "name": row[1],
+                        "normalizedName": row[2],
+                        "type": row[3],
+                        "collectionId": row[4],
+                        "documentCount": row[5] or 0,
+                        "totalMentions": int(row[6] or 0),
                     }
                     for row in rows
                 ]
@@ -380,15 +591,14 @@ class PgStore:
             conn.close()
 
     def get_relationships(self, collection_id: str, limit: int = 100) -> list:
-        """Read relationships for a collection with source/target entity names."""
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     SELECT r.id, r.type, r.confidence,
-                           src.name as source_name, src.type as source_type,
-                           tgt.name as target_name, tgt.type as target_type,
+                           src.name AS source_name, src.type AS source_type,
+                           tgt.name AS target_name, tgt.type AS target_type,
                            r."documentId", r."evidenceChunkId",
                            r.metadata
                     FROM "Relationship" r
@@ -403,16 +613,16 @@ class PgStore:
                 rows = cur.fetchall()
                 return [
                     {
-                        "id":              row[0],
-                        "type":            row[1],
-                        "confidence":      float(row[2]),
-                        "sourceName":      row[3],
-                        "sourceType":      row[4],
-                        "targetName":      row[5],
-                        "targetType":      row[6],
-                        "documentId":      row[7],
+                        "id": row[0],
+                        "type": row[1],
+                        "confidence": float(row[2]),
+                        "sourceName": row[3],
+                        "sourceType": row[4],
+                        "targetName": row[5],
+                        "targetType": row[6],
+                        "documentId": row[7],
                         "evidenceChunkId": row[8],
-                        "metadata":        row[9] or {},
+                        "metadata": _json_dict(row[9]),
                     }
                     for row in rows
                 ]

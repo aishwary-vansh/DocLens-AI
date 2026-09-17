@@ -29,9 +29,8 @@ export class DocumentProcessingQueueService {
    * @param collectionId
    */
   async enqueueDocument(documentId: string, fileUrl: string, collectionId: string) {
-    // Resolve to an absolute path on the NestJS container.
-    // AiProxyService.processDocument() reads this file and streams the bytes
-    // to the AI service — no shared filesystem required.
+    // Resolve to an absolute path on the shared uploads volume. In Docker,
+    // both backend and ai-service mount this volume at /app/uploads.
     const absoluteFilePath = join(process.cwd(), fileUrl);
 
     const processingJob = await this.prisma.processingJob.create({
@@ -58,8 +57,28 @@ export class DocumentProcessingQueueService {
   private async runJobDirect(job: ProcessDocumentJob) {
     const { processingJobId, documentId, absoluteFilePath, collectionId } = job;
     try {
+      await this.prisma.processingJob.update({
+        where: { id: processingJobId },
+        data: {
+          status: 'ACTIVE',
+          stage: 'EXTRACTING',
+          progress: 20,
+          attempts: { increment: 1 },
+          startedAt: new Date(),
+          lastHeartbeatAt: new Date(),
+        },
+      });
+      const extractingDoc = await this.prisma.document.update({
+        where: { id: documentId },
+        data: { status: 'EXTRACTING', processingProgress: 20, errorMessage: null },
+      });
+      this.events.emitStatusChanged(collectionId, extractingDoc);
+
       // Actually send it to the AI Service for ingestion
-      await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
+      const result = await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
+      if (result?.status && result.status !== 'completed') {
+        throw new Error(result.message || `AI ingestion returned status ${result.status}`);
+      }
 
       await this.prisma.processingJob.update({
         where: { id: processingJobId },
@@ -74,7 +93,7 @@ export class DocumentProcessingQueueService {
       });
       const doc = await this.prisma.document.update({
         where: { id: documentId },
-        data: { status: 'COMPLETED', processingProgress: 100, errorMessage: null },
+        data: { status: 'READY', processingProgress: 100, errorMessage: null, aiProcessedAt: new Date() },
       });
       this.events.emitStatusChanged(collectionId, doc);
     } catch (err: any) {

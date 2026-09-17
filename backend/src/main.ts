@@ -64,7 +64,7 @@ async function bootstrap() {
   // This allows any deployed frontend URL without hardcoding URLs.
   // credentials:true enables Authorization header forwarding.
   app.enableCors({
-    origin: true,
+    origin: corsOrigins.includes('*') ? true : corsOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,

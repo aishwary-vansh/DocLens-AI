@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { collectionsApi, documentsApi, workspacesApi } from "../services/api";
+import { useSocket } from "../contexts/SocketContext";
 import { enrichDocument } from "../utils/researchData";
 
 const initialState = {
@@ -9,6 +10,7 @@ const initialState = {
 };
 
 export default function useResearchCorpus() {
+  const socket = useSocket();
   const [data, setData] = useState(initialState);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -59,6 +61,33 @@ export default function useResearchCorpus() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!socket?.connected || !data.collections.length) return undefined;
+
+    const collectionIds = data.collections.map((collection) => collection.id);
+    collectionIds.forEach((collectionId) => socket.joinCollection(collectionId));
+
+    let refreshTimer;
+    const scheduleRefresh = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        load();
+      }, 250);
+    };
+
+    const unsubscribeUploaded = socket.on("document:uploaded", scheduleRefresh);
+    const unsubscribeStatus = socket.on("document:status", scheduleRefresh);
+    const unsubscribeDeleted = socket.on("document:deleted", scheduleRefresh);
+
+    return () => {
+      window.clearTimeout(refreshTimer);
+      unsubscribeUploaded?.();
+      unsubscribeStatus?.();
+      unsubscribeDeleted?.();
+      collectionIds.forEach((collectionId) => socket.leaveCollection(collectionId));
+    };
+  }, [data.collections, load, socket]);
 
   return useMemo(
     () => ({

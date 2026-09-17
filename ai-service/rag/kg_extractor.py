@@ -5,7 +5,7 @@
 # This runs as a FastAPI BackgroundTask AFTER ingestion completes, so it
 # does NOT block document upload or chunking.
 #
-# Extracts: Authors, Papers, Concepts, Datasets, Methods, Models, Metrics, Tasks
+# Extracts: Authors, Papers, Concepts, Datasets, Methods, Models, Metrics
 # Every relationship references the evidence_chunk_id it was extracted from.
 # ─────────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
@@ -16,7 +16,6 @@ from typing import List, Dict, Any
 
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.messages import SystemMessage, HumanMessage
 
 from .schemas import KGEntity, KGRelationship, KGExtractionResult
 
@@ -28,7 +27,7 @@ KG_CHUNK_BATCH_SIZE = 10
 
 VALID_ENTITY_TYPES = {
     "AUTHOR", "PAPER", "CONCEPT", "DATASET",
-    "METHOD", "MODEL", "METRIC", "TASK",
+    "METHOD", "MODEL", "METRIC",
 }
 
 VALID_RELATION_TYPES = {
@@ -42,7 +41,7 @@ _KG_SYSTEM = """You are a scientific knowledge graph extractor.
 Extract named entities and relationships from the provided document chunks.
 
 ENTITY TYPES (use exactly these strings):
-  AUTHOR, PAPER, CONCEPT, DATASET, METHOD, MODEL, METRIC, TASK
+  AUTHOR, PAPER, CONCEPT, DATASET, METHOD, MODEL, METRIC
 
 RELATIONSHIP TYPES (use exactly these strings):
   USES, EVALUATED_ON, REPORTS, COMPARED_WITH, BASED_ON,
@@ -110,8 +109,8 @@ def extract_kg_from_document(document_id: str, chunks: list) -> KGExtractionResu
 
     parser = PydanticOutputParser(pydantic_object=KGExtractionResult)
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=_KG_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        HumanMessage(content=_KG_HUMAN),
+        ("system", _KG_SYSTEM.format(format_instructions=parser.get_format_instructions())),
+        ("human", _KG_HUMAN),
     ])
     chain = prompt | llm | parser
 

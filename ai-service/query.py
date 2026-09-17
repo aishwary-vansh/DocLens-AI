@@ -6,12 +6,20 @@
 # ─────────────────────────────────────────────────────────────────────────────
 import logging
 import os
+import math
 from typing import List, Optional, Dict, Any
 
 from vector_store.pg_store import pg_store
 from ingest import get_model, get_reranker
 
 logger = logging.getLogger(__name__)
+
+
+def _sigmoid_score(value: float) -> float:
+    try:
+        return 1.0 / (1.0 + math.exp(-float(value)))
+    except OverflowError:
+        return 0.0 if value < 0 else 1.0
 
 
 # ── Legacy helper kept for summarise/review (no LangChain needed) ─────────────
@@ -41,14 +49,14 @@ def _call_gemini_direct(prompt: str, system_message: str = "You are a helpful re
 def _retrieve_and_rerank(query: str, collection_id: str, document_ids: list, top_k: int, rerank_top: int = 40) -> list:
     """Shared retrieval + BGE reranking for non-chain functions."""
     model = get_model()
-    query_embedding = model.encode(query).tolist()
+    query_embedding = model.encode(query, normalize_embeddings=True).tolist()
     chunks = pg_store.search(query, query_embedding, collection_id, document_ids, top_k=rerank_top)
     if chunks:
         reranker = get_reranker()
         pairs = [[query, c["content"]] for c in chunks]
         scores = reranker.predict(pairs)
         for i, chunk in enumerate(chunks):
-            chunk["score"] = float(scores[i])
+            chunk["score"] = _sigmoid_score(float(scores[i]))
         chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:top_k]
     return chunks
 
@@ -62,7 +70,9 @@ def _format_citations_legacy(chunks: list) -> tuple[str, list]:
         citations.append({
             "chunkId":    c["id"],
             "documentId": c["documentId"],
+            "documentTitle": c.get("documentTitle", ""),
             "pageNumber": c["pageNumber"],
+            "chunkIndex": c.get("chunkIndex"),
             "sourceText": c["content"],
             "relevance":  c.get("score"),
         })
@@ -127,7 +137,9 @@ def ask_question(
         citations_out.append({
             "chunkId":     cit.chunk_id,
             "documentId":  cit.document_id,
+            "documentTitle": cit.document_title,
             "pageNumber":  cit.page_number,
+            "chunkIndex":  None,
             "sourceText":  cit.source_text,
             "relevance":   cit.relevance,
         })
@@ -208,6 +220,7 @@ def compare_documents(
             {
                 "chunkId":    c.chunk_id,
                 "documentId": c.document_id,
+                "documentTitle": c.document_title,
                 "pageNumber": c.page_number,
                 "sourceText": c.source_text,
                 "relevance":  c.relevance,
@@ -262,6 +275,7 @@ def literature_review(
             {
                 "chunkId":    c.chunk_id,
                 "documentId": c.document_id,
+                "documentTitle": c.document_title,
                 "pageNumber": c.page_number,
                 "sourceText": c.source_text,
                 "relevance":  c.relevance,
@@ -279,6 +293,7 @@ def literature_review(
                     {
                         "chunkId":    c.chunk_id,
                         "documentId": c.document_id,
+                        "documentTitle": c.document_title,
                         "pageNumber": c.page_number,
                         "sourceText": c.source_text,
                         "relevance":  c.relevance,

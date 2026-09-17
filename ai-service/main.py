@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import os
+import math
 
 import ingest
 import query
@@ -26,6 +27,12 @@ app.add_middleware(
 )
 
 # --- Request Models ---
+
+def _sigmoid_score(value: float) -> float:
+    try:
+        return 1.0 / (1.0 + math.exp(-float(value)))
+    except OverflowError:
+        return 0.0 if value < 0 else 1.0
 
 class IngestRequest(BaseModel):
     documentId: str
@@ -147,7 +154,7 @@ def search(req: SearchRequest):
         from vector_store.pg_store import pg_store
         from ingest import get_model, get_reranker
         model = get_model()
-        q_emb = model.encode(req.query).tolist()
+        q_emb = model.encode(req.query, normalize_embeddings=True).tolist()
         chunks = pg_store.search(req.query, q_emb, req.collectionId, req.documentIds, top_k=40)
 
         if chunks:
@@ -155,7 +162,7 @@ def search(req: SearchRequest):
             pairs = [[req.query, c["content"]] for c in chunks]
             scores = reranker.predict(pairs)
             for i, chunk in enumerate(chunks):
-                chunk["score"] = float(scores[i])
+                chunk["score"] = _sigmoid_score(float(scores[i]))
             chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:req.topK]
 
         return chunks
@@ -276,7 +283,7 @@ def evaluate(req: EvaluateRequest):
         from vector_store.pg_store import pg_store
         from ingest import get_model
         model = get_model()
-        q_emb = model.encode(req.question).tolist()
+        q_emb = model.encode(req.question, normalize_embeddings=True).tolist()
         retrieved_chunks = pg_store.search(
             req.question, q_emb, req.collectionId, req.documentIds, top_k=req.topK
         )

@@ -3,7 +3,7 @@
 // Socket.io client — connects once on auth, joins collection rooms on demand.
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
-import { tokenStorage } from '../services/api';
+import { useAuth } from './AuthContext';
 
 const SocketCtx = createContext(null);
 export const useSocket = () => useContext(SocketCtx);
@@ -13,12 +13,17 @@ const SOCKET_URL = import.meta.env.VITE_API_URL
   : 'http://localhost:3001';
 
 export const SocketProvider = ({ children }) => {
+  const { token, isAuthenticated } = useAuth();
   const socketRef  = useRef(null);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    const token = tokenStorage.get();
-    if (!token) return;
+    if (!isAuthenticated || !token) {
+      socketRef.current?.disconnect();
+      socketRef.current = null;
+      setConnected(false);
+      return undefined;
+    }
 
     const socket = io(SOCKET_URL, {
       auth: { token },
@@ -32,8 +37,11 @@ export const SocketProvider = ({ children }) => {
     socket.on('connect_error', (err) => console.warn('[Socket] error:', err.message));
 
     socketRef.current = socket;
-    return () => { socket.disconnect(); };
-  }, []);
+    return () => {
+      socket.disconnect();
+      if (socketRef.current === socket) socketRef.current = null;
+    };
+  }, [isAuthenticated, token]);
 
   const joinCollection = (collectionId) => {
     socketRef.current?.emit('join:collection', collectionId);

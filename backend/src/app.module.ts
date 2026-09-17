@@ -1,9 +1,9 @@
 // src/app.module.ts
 import { Module } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
-import { APP_GUARD } from '@nestjs/core';
-import { ConfigModule } from '@nestjs/config';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { createKeyv } from '@keyv/redis';
 import { appConfig } from './config/app.config';
 import { AuthModule } from './auth/auth.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
@@ -20,18 +20,38 @@ import { QueryModule } from './query/query.module';
 
 @Module({
   imports: [
-    // ── Cache Module ────────────────────────────────────────────────────────
-    CacheModule.register({
-      isGlobal: true,
-      ttl: 60000, // default 60s
-    }),
-
     // ── Config — globally available via ConfigService ──────────────────
     ConfigModule.forRoot({
       isGlobal: true,
       load: [appConfig],
       envFilePath: '.env',
     }),
+
+    // ── Cache Module ────────────────────────────────────────────────────────
+    CacheModule.registerAsync({
+      isGlobal: true,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService): any => {
+        const redisUrl = config.get<string>('REDIS_URL') ?? process.env.REDIS_URL;
+        const ttl = Number(process.env.CACHE_TTL_MS ?? 60000);
+
+        if (!redisUrl) {
+          return { ttl };
+        }
+
+        return {
+          ttl,
+          stores: [
+            createKeyv(redisUrl, {
+              namespace: process.env.CACHE_NAMESPACE ?? 'doclens',
+              throwOnConnectError: false,
+              throwOnErrors: false,
+            }),
+          ],
+        };
+      },
+    }),
+
     ThrottlerModule.forRoot([
       {
         ttl: Number(process.env.RATE_LIMIT_TTL_MS ?? 60000),

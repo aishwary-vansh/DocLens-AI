@@ -124,7 +124,7 @@ class KGEntity(BaseModel):
     name: str
     normalized_name: str
     entity_type: str = Field(
-        description="One of: AUTHOR, PAPER, CONCEPT, DATASET, METHOD, MODEL, METRIC, TASK"
+        description="One of: AUTHOR, PAPER, CONCEPT, DATASET, METHOD, MODEL, METRIC"
     )
     mentions: int = Field(1, ge=1)
     pages: List[int] = Field(default_factory=list)

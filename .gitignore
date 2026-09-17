@@ -145,7 +145,8 @@ backend/uploads/
 
 # AI/RAG generated data
 ai-service/data/
-ai-service/vector_store/
+ai-service/vector_store/**/*.index
+ai-service/vector_store/**/*.bin
 
 # ==========================================
 # Docker

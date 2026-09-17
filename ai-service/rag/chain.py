@@ -20,7 +20,7 @@ import os
 from typing import List, Optional, Dict, Any
 
 from langchain_core.documents import Document as LCDocument
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnablePassthrough
@@ -84,6 +84,7 @@ def _chunks_to_context(docs: List[LCDocument]) -> str:
             f"[Evidence {i}]\n"
             f"chunk_id: {meta.get('chunk_id', 'unknown')}\n"
             f"document_id: {meta.get('document_id', 'unknown')}\n"
+            f"document_title: {meta.get('document_title', 'Unknown document')}\n"
             f"page: {meta.get('page_number', 'N/A')}\n"
             f"---\n{doc.page_content}\n"
         )
@@ -96,6 +97,7 @@ def _docs_to_raw_chunks(docs: List[LCDocument]) -> list:
         {
             "id":          doc.metadata.get("chunk_id", ""),
             "documentId":  doc.metadata.get("document_id", ""),
+            "documentTitle": doc.metadata.get("document_title", ""),
             "content":     doc.page_content,
             "pageNumber":  doc.metadata.get("page_number"),
             "chunkIndex":  doc.metadata.get("chunk_index"),
@@ -134,9 +136,9 @@ Respond with a JSON object matching the schema."""
 def _build_answer_chain(llm: ChatGoogleGenerativeAI):
     parser = PydanticOutputParser(pydantic_object=StructuredAnswer)
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=_ANSWER_SYSTEM.format(format_instructions=parser.get_format_instructions())),
+        ("system", _ANSWER_SYSTEM.format(format_instructions=parser.get_format_instructions())),
         MessagesPlaceholder(variable_name="history", optional=True),
-        HumanMessage(content=_ANSWER_HUMAN),
+        ("human", _ANSWER_HUMAN),
     ])
     # We use a plain prompt + LLM + parser chain
     return prompt | llm | parser
@@ -145,14 +147,14 @@ def _build_answer_chain(llm: ChatGoogleGenerativeAI):
 def _build_query_rewrite_chain(llm: ChatGoogleGenerativeAI):
     """Rewrite a question in the context of conversation history."""
     rewrite_prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=(
+        ("system", (
             "Given the conversation history and a follow-up question, "
             "rewrite the follow-up as a standalone question that captures "
             "all necessary context. "
             "Return ONLY the rewritten question — no explanation, no prefix."
         )),
         MessagesPlaceholder(variable_name="history"),
-        HumanMessage(content="Follow-up question: {question}\n\nRewritten standalone question:"),
+        ("human", "Follow-up question: {question}\n\nRewritten standalone question:"),
     ])
     return rewrite_prompt | llm | (lambda msg: msg.content.strip())
 
@@ -323,8 +325,8 @@ def run_comparison_chain(
     llm = _get_llm()
     parser = PydanticOutputParser(pydantic_object=PaperComparisonResult)
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=_COMPARE_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        HumanMessage(content=_COMPARE_HUMAN),
+        ("system", _COMPARE_SYSTEM.format(format_instructions=parser.get_format_instructions())),
+        ("human", _COMPARE_HUMAN),
     ])
 
     retriever = DocLensRetriever.create(
@@ -382,8 +384,8 @@ def run_literature_review_chain(
     llm = _get_llm()
     parser = PydanticOutputParser(pydantic_object=LiteratureReviewResult)
     prompt = ChatPromptTemplate.from_messages([
-        SystemMessage(content=_REVIEW_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        HumanMessage(content=_REVIEW_HUMAN),
+        ("system", _REVIEW_SYSTEM.format(format_instructions=parser.get_format_instructions())),
+        ("human", _REVIEW_HUMAN),
     ])
 
     retriever = DocLensRetriever.create(

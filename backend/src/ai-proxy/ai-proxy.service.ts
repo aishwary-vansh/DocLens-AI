@@ -41,6 +41,11 @@ export class AiProxyService {
     return this.request('/ingest', 'POST', { documentId, filePath, collectionId });
   }
 
+  async embedDocument(documentId: string) {
+    this.logger.log(`Embedding chunks for document ${documentId}`);
+    return this.request('/embed', 'POST', { documentId });
+  }
+
   async getProcessingStatus(documentId: string) {
     return this.request(`/status/${documentId}`, 'GET');
   }
@@ -59,6 +64,10 @@ export class AiProxyService {
     documentIds?: string[],
   ) {
     return this.request('/search', 'POST', { query, collectionId, topK, documentIds });
+  }
+
+  async hybridSearch(query: string, collectionId: string, topK = 20, documentIds?: string[]) {
+    return this.request('/search/hybrid', 'POST', { query, collectionId, topK, documentIds });
   }
 
   async chunkSearch(query: string, collectionId: string, topK = 8, documentIds?: string[]) {

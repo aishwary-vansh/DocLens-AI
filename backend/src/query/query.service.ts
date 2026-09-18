@@ -283,6 +283,17 @@ export class QueryService {
     };
   }
 
+  async hybridSearch(
+    query: string,
+    collectionId: string,
+    topK = 20,
+    documentIds?: string[],
+    userId?: string,
+  ) {
+    if (userId) await this.assertCollectionAccess(collectionId, userId);
+    return this.ai.hybridSearch(query, collectionId, topK, documentIds);
+  }
+
   async summarise(documentId: string, userId?: string) {
     const document = await this.prisma.document.findFirst({
       where: {

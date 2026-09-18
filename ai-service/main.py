@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import os
 import math
+import time
 
 import ingest
 import query
@@ -38,6 +39,9 @@ class IngestRequest(BaseModel):
     documentId: str
     filePath: str
     collectionId: str
+
+class EmbedRequest(BaseModel):
+    documentId: str
 
 class SearchRequest(BaseModel):
     query: str
@@ -81,27 +85,6 @@ class EvaluateRequest(BaseModel):
     isNegativeTest: bool = False  # True = question has no answer in docs
 
 
-# --- Background task: async KG extraction ---
-
-def _run_kg_extraction(document_id: str, chunks: list):
-    """
-    Runs asynchronously after ingestion. Does NOT block the /ingest response.
-    Extracts KG entities/relationships and persists them to PostgreSQL.
-    """
-    try:
-        from rag.kg_extractor import extract_kg_from_document, persist_kg_result
-        logger.info("KG extraction starting for document %s (%d chunks)", document_id, len(chunks))
-        result = extract_kg_from_document(document_id, chunks)
-        persist_kg_result(document_id, result)
-        logger.info(
-            "KG extraction complete for document %s — entities=%d relationships=%d",
-            document_id, len(result.entities), len(result.relationships),
-        )
-    except Exception as e:
-        # Log but don't crash — ingestion already succeeded
-        logger.error("KG extraction background task failed for document %s: %s", document_id, e)
-
-
 # --- Endpoints ---
 
 @app.get("/health")
@@ -111,32 +94,28 @@ def health():
 
 
 @app.post("/ingest")
-def process_document(req: IngestRequest, background_tasks: BackgroundTasks):
+def process_document(req: IngestRequest):
     """
-    Ingest a document: parse → chunk → embed → store in PostgreSQL.
-    KG extraction runs asynchronously AFTER this response is returned.
+    Phase 1 ingestion: parse → represent evidence → persist chunk metadata.
+    Embedding and retrieval are intentionally deferred to later phases.
     """
     try:
         res = ingest.ingest_document(req.documentId, req.filePath, req.collectionId)
         logger.info("Ingestion complete for document %s: %s", req.documentId, res)
 
-        # Fetch stored chunks for KG extraction (after ingestion)
-        # Run in background — does not block this response
-        if res.get("status") == "completed":
-            try:
-                from vector_store.pg_store import pg_store
-                chunks = pg_store.get_document_chunks(req.documentId)
-                background_tasks.add_task(_run_kg_extraction, req.documentId, chunks)
-                logger.info(
-                    "KG extraction queued for document %s (%d chunks)",
-                    req.documentId, len(chunks),
-                )
-            except Exception as e:
-                logger.warning("Could not queue KG extraction: %s", e)
-
         return res
     except Exception as e:
         logger.error("Ingestion failed for document %s: %s", req.documentId, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/embed")
+def embed_document(req: EmbedRequest):
+    """Phase 2: embed persisted ingestion chunks into pgvector."""
+    try:
+        return ingest.embed_document(req.documentId)
+    except Exception as e:
+        logger.error("Embedding failed for document %s: %s", req.documentId, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -168,6 +147,31 @@ def search(req: SearchRequest):
         return chunks
     except Exception as e:
         logger.error("Search failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/hybrid")
+def hybrid_search(req: SearchRequest):
+    """Phase 3: return independent vector and keyword candidate lists."""
+    try:
+        from vector_store.pg_store import pg_store
+        from ingest import get_model
+
+        model = get_model()
+        query_embedding = model.encode(
+            req.query,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        ).tolist()
+        return pg_store.hybrid_search(
+            req.query,
+            query_embedding,
+            req.collectionId,
+            req.documentIds,
+            top_k=req.topK,
+        )
+    except Exception as e:
+        logger.error("Hybrid search failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -272,6 +276,7 @@ def evaluate(req: EvaluateRequest):
         from rag.schemas import StructuredAnswer
 
         # Run the full RAG chain to get a structured answer
+        started_at = time.perf_counter()
         result_dict = query.ask_question(
             req.question,
             req.collectionId,
@@ -324,6 +329,7 @@ def evaluate(req: EvaluateRequest):
             relevant_chunk_ids=req.relevantChunkIds,
             k=req.topK,
         ).run()
+        report["latency_ms"] = round((time.perf_counter() - started_at) * 1000, 2)
 
         # Negative test assertion
         if req.isNegativeTest:

@@ -1,8 +1,9 @@
 import logging
+import hashlib
 import os
 import re
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Iterable
 
 from dotenv import load_dotenv
 
@@ -12,11 +13,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 CHUNK_MAX_CHARS = int(os.getenv("CHUNK_MAX_CHARS", "3600"))
 CHUNK_OVERLAP_CHARS = int(os.getenv("CHUNK_OVERLAP_CHARS", "450"))
 MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "120"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
 
 _model = None
@@ -24,11 +25,11 @@ _reranker = None
 
 
 def get_model():
+    """Compatibility hook for the later embedding phase."""
     global _model
     if _model is None:
         from sentence_transformers import SentenceTransformer
 
-        logger.info("Loading embedding model: %s", EMBEDDING_MODEL)
         _model = SentenceTransformer(EMBEDDING_MODEL)
         dimensions = int(_model.get_sentence_embedding_dimension() or 0)
         if dimensions != BGE_M3_DIMENSIONS:
@@ -40,11 +41,11 @@ def get_model():
 
 
 def get_reranker():
+    """Compatibility hook for the later reranking phase."""
     global _reranker
     if _reranker is None:
         from sentence_transformers import CrossEncoder
 
-        logger.info("Loading reranker model: %s", RERANKER_MODEL)
         _reranker = CrossEncoder(RERANKER_MODEL)
     return _reranker
 
@@ -104,61 +105,6 @@ def split_text(text: str, max_chars: int = CHUNK_MAX_CHARS) -> list[str]:
     return chunks
 
 
-def _safe_docling_label(item: Any) -> str:
-    label = getattr(item, "label", None)
-    return str(label) if label is not None else "text"
-
-
-def _docling_chunks(file_path: str, title: str) -> list[dict]:
-    """Try structure-aware Docling extraction. Raises when Docling cannot parse."""
-    from docling.chunking import HierarchicalChunker
-    from docling.document_converter import DocumentConverter
-
-    converter = DocumentConverter()
-    conv_res = converter.convert(file_path)
-    doc = conv_res.document
-    chunker = HierarchicalChunker()
-    chunks = []
-
-    for source_index, chunk in enumerate(chunker.chunk(doc)):
-        text = clean_text(getattr(chunk, "text", "") or "")
-        if len(text) < MIN_CHUNK_CHARS:
-            continue
-
-        meta = getattr(chunk, "meta", None)
-        headings = list(getattr(meta, "headings", []) or []) if meta else []
-        doc_items = list(getattr(meta, "doc_items", []) or []) if meta else []
-
-        page_nos = []
-        for item in doc_items:
-            for prov in getattr(item, "prov", []) or []:
-                page_no = getattr(prov, "page_no", None)
-                if page_no:
-                    page_nos.append(int(page_no))
-
-        section_prefix = f"Section: {' > '.join(headings)}\n\n" if headings else ""
-        rich_text = clean_text(f"Paper: {title}\n{section_prefix}{text}")
-        for part_index, part in enumerate(split_text(rich_text)):
-            chunks.append(
-                {
-                    "content": part,
-                    "pageNumber": min(page_nos) if page_nos else None,
-                    "metadata": {
-                        "extractor": "docling",
-                        "source_chunk_index": source_index,
-                        "source_part_index": part_index,
-                        "section": headings[0] if headings else "",
-                        "subsection": headings[-1] if len(headings) > 1 else "",
-                        "page_start": min(page_nos) if page_nos else None,
-                        "page_end": max(page_nos) if page_nos else None,
-                        "content_type": _safe_docling_label(doc_items[0]) if doc_items else "text",
-                    },
-                }
-            )
-
-    return chunks
-
-
 def _pdf_metadata(file_path: str) -> dict:
     import fitz
 
@@ -174,34 +120,121 @@ def _pdf_metadata(file_path: str) -> dict:
         }
 
 
+def _table_chunks(page, page_number: int, title: str, section: str = "") -> list[dict]:
+    """Extract native PDF tables when PyMuPDF exposes its table detector."""
+    find_tables = getattr(page, "find_tables", None)
+    if not find_tables:
+        return []
+    try:
+        tables = find_tables().tables
+    except Exception as exc:
+        logger.debug("Table extraction skipped on page %d: %s", page_number, exc)
+        return []
+
+    chunks = []
+    for table_index, table in enumerate(tables):
+        try:
+            markdown = table.to_markdown()
+        except Exception:
+            continue
+        if not markdown or len(markdown.strip()) < MIN_CHUNK_CHARS:
+            continue
+        chunks.append(
+            {
+                "content": clean_text(
+                    f"Paper: {title}\nPage: {page_number}\n"
+                    f"Table {table_index + 1}:\n{markdown}"
+                ),
+                "pageNumber": page_number,
+                "metadata": {
+                    "extractor": "pymupdf-table",
+                    "source_page": page_number,
+                    "content_type": "table",
+                    "table_index": table_index,
+                    "section": section,
+                },
+            }
+        )
+    return chunks
+
+
+def _figure_chunks(page, page_number: int, title: str, page_text: str, section: str = "") -> list[dict]:
+    """Represent figure captions and page image presence without interpreting pixels."""
+    image_count = len(page.get_images(full=True))
+    if image_count == 0:
+        return []
+
+    captions = re.findall(
+        r"(?im)^\s*((?:figure|fig\.)\s*[\w.-]+[^\n]*)",
+        page_text,
+    )
+    if not captions:
+        captions = [f"Figure on page {page_number}"]
+
+    return [
+        {
+            "content": clean_text(
+                f"Paper: {title}\nPage: {page_number}\n{caption}\n"
+                "Visual evidence is present on this page; pixel interpretation is deferred."
+            ),
+            "pageNumber": page_number,
+            "metadata": {
+                "extractor": "pymupdf",
+                "source_page": page_number,
+                "content_type": "figure",
+                "caption": caption,
+                "image_count": image_count,
+                "section": section,
+            },
+        }
+        for caption in captions
+    ]
+
+
 def _pymupdf_chunks(file_path: str, title: str) -> list[dict]:
-    """Reliable fallback extraction for PDFs that Docling cannot structure."""
+    """Extract text, native tables, and captioned visual evidence."""
     import fitz
 
     chunks = []
+    current_section = ""
     with fitz.open(file_path) as pdf:
         for page_index, page in enumerate(pdf, start=1):
-            text = clean_text(page.get_text("text") or "")
-            if len(text) < MIN_CHUNK_CHARS:
-                continue
-            rich_text = clean_text(f"Paper: {title}\nPage: {page_index}\n\n{text}")
-            for part_index, part in enumerate(split_text(rich_text)):
-                chunks.append(
-                    {
-                        "content": part,
-                        "pageNumber": page_index,
-                        "metadata": {
-                            "extractor": "pymupdf",
-                            "source_page": page_index,
-                            "source_part_index": part_index,
-                            "section": "",
-                            "subsection": "",
-                            "page_start": page_index,
-                            "page_end": page_index,
-                            "content_type": "page_text",
-                        },
-                    }
+            raw_text = page.get_text("text") or ""
+            text = clean_text(raw_text)
+            for line in (line.strip() for line in raw_text.splitlines()):
+                if (
+                    3 <= len(line) <= 120
+                    and len(line.split()) <= 14
+                    and not line.endswith((".", ",", ";", ":"))
+                    and (
+                        re.match(r"^\d+(?:\.\d+)*\s+", line)
+                        or line.isupper()
+                        or line.istitle()
+                    )
+                ):
+                    current_section = line
+                    break
+            if len(text) >= MIN_CHUNK_CHARS:
+                section_prefix = f"Section: {current_section}\n" if current_section else ""
+                rich_text = clean_text(
+                    f"Paper: {title}\nPage: {page_index}\n{section_prefix}\n{text}"
                 )
+                for part_index, part in enumerate(split_text(rich_text)):
+                    chunks.append(
+                        {
+                            "content": part,
+                            "pageNumber": page_index,
+                            "metadata": {
+                                "extractor": "pymupdf",
+                                "source_page": page_index,
+                                "source_part_index": part_index,
+                                "section": current_section,
+                                "content_type": "page_text",
+                            },
+                        }
+                    )
+            chunks.extend(_table_chunks(page, page_index, title, current_section))
+            chunks.extend(_figure_chunks(page, page_index, title, raw_text, current_section))
     return chunks
 
 
@@ -224,8 +257,7 @@ def _reading_time_minutes(word_count: int) -> int:
 
 def ingest_document(document_id: str, file_path: str, collection_id: str):
     """
-    Parse a PDF, build retrieval-friendly chunks, embed with BGE-M3, and store
-    chunks in PostgreSQL/pgvector.
+    Parse a PDF into persistent Phase 1 evidence chunks.
     """
     if not os.path.exists(file_path):
         return {"status": "failed", "message": f"File not found: {file_path}"}
@@ -234,23 +266,15 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
     pdf_meta = _pdf_metadata(file_path)
     title = _best_title(existing_title, pdf_meta, file_path)
 
-    try:
-        chunks = _docling_chunks(file_path, title)
-        extractor = "docling"
-    except Exception as exc:
-        logger.warning("Docling extraction failed for %s; falling back to PyMuPDF: %s", document_id, exc)
-        chunks = _pymupdf_chunks(file_path, title)
-        extractor = "pymupdf"
-
-    if not chunks:
-        chunks = _pymupdf_chunks(file_path, title)
-        extractor = "pymupdf"
+    chunks = _pymupdf_chunks(file_path, title)
+    extractor = "pymupdf"
 
     if not chunks:
         return {"status": "failed", "message": "No extractable text found in PDF"}
 
     for index, chunk in enumerate(chunks):
         chunk["chunkIndex"] = index
+        chunk["contentHash"] = hashlib.sha256(chunk["content"].encode("utf-8")).hexdigest()
         chunk["metadata"] = {
             **chunk.get("metadata", {}),
             "paper_id": document_id,
@@ -258,19 +282,7 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
             "chunk_index": index,
         }
 
-    texts_to_embed = [chunk["content"] for chunk in chunks]
-    model = get_model()
-    embeddings = model.encode(
-        texts_to_embed,
-        batch_size=EMBED_BATCH_SIZE,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
-
-    for index, chunk in enumerate(chunks):
-        chunk["embedding"] = embeddings[index].tolist()
-
-    pg_store.insert_chunks(chunks, document_id)
+    pg_store.insert_ingestion_chunks(chunks, document_id)
 
     words = _word_count(chunks)
     ingest_metadata = {
@@ -280,10 +292,9 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
         "wordCount": words,
         "readingTimeMinutes": _reading_time_minutes(words),
         "extractor": extractor,
-        "embeddingModel": EMBEDDING_MODEL,
-        "embeddingDimensions": BGE_M3_DIMENSIONS,
         "chunkCount": len(chunks),
-        "vectorStore": "pgvector",
+        "evidenceTypes": sorted({chunk["metadata"]["content_type"] for chunk in chunks}),
+        "vectorStore": "pending-embedding",
     }
     pg_store.update_document_ingest_metadata(document_id, ingest_metadata)
 
@@ -296,7 +307,40 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
         "word_count": words,
         "reading_time_minutes": _reading_time_minutes(words),
         "extractor": extractor,
+        "evidence_types": sorted({chunk["metadata"]["content_type"] for chunk in chunks}),
+        "vector_store": "postgresql",
+        "embedding_status": "pending",
+    }
+
+
+def embed_document(document_id: str) -> dict:
+    """Generate BGE-M3 embeddings for Phase 1 chunks and persist them."""
+    chunks = pg_store.get_unembedded_chunks(document_id)
+    if not chunks:
+        return {
+            "status": "completed",
+            "document_id": document_id,
+            "chunks_embedded": 0,
+            "embedding_model": EMBEDDING_MODEL,
+            "embedding_dimensions": BGE_M3_DIMENSIONS,
+        }
+
+    model = get_model()
+    embeddings = model.encode(
+        [chunk["content"] for chunk in chunks],
+        batch_size=EMBED_BATCH_SIZE,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    )
+    for index, chunk in enumerate(chunks):
+        vector = embeddings[index]
+        chunk["embedding"] = vector.tolist() if hasattr(vector, "tolist") else list(vector)
+
+    pg_store.update_chunk_embeddings(document_id, chunks, EMBEDDING_MODEL)
+    return {
+        "status": "completed",
+        "document_id": document_id,
+        "chunks_embedded": len(chunks),
         "embedding_model": EMBEDDING_MODEL,
         "embedding_dimensions": BGE_M3_DIMENSIONS,
-        "vector_store": "pgvector",
     }

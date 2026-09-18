@@ -230,6 +230,46 @@ class PgStore:
         finally:
             conn.close()
 
+    def insert_ingestion_chunks(self, chunks: list[dict], document_id: str) -> None:
+        """Persist Phase 1 evidence chunks before the embedding phase."""
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    'DELETE FROM "DocumentChunk" WHERE "documentId" = %s',
+                    (document_id,),
+                )
+                for chunk in chunks:
+                    content = chunk["content"].strip()
+                    cur.execute(
+                        """
+                        INSERT INTO "DocumentChunk" (
+                            id, "documentId", "chunkIndex", content, "pageNumber",
+                            metadata, "tokenCount", "contentHash", "createdAt"
+                        )
+                        VALUES (
+                            %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                        )
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            document_id,
+                            int(chunk["chunkIndex"]),
+                            content,
+                            chunk.get("pageNumber"),
+                            Json(chunk.get("metadata", {})),
+                            max(1, len(content.split())),
+                            chunk.get("contentHash")
+                            or hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                        ),
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def get_document_chunks(self, document_id: str) -> list:
         """Return all chunks for a document, used by KG extraction and evaluation."""
         conn = self.get_connection()
@@ -259,7 +299,198 @@ class PgStore:
         finally:
             conn.close()
 
+    def get_unembedded_chunks(self, document_id: str) -> list:
+        """Load persisted Phase 1 chunks that still need embeddings."""
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, "chunkIndex", content, "pageNumber", metadata, "contentHash"
+                    FROM "DocumentChunk"
+                    WHERE "documentId" = %s AND embedding IS NULL
+                    ORDER BY "chunkIndex"
+                    """,
+                    (document_id,),
+                )
+                return [
+                    {
+                        "id": row[0],
+                        "chunkIndex": row[1],
+                        "content": row[2],
+                        "pageNumber": row[3],
+                        "metadata": _json_dict(row[4]),
+                        "contentHash": row[5],
+                    }
+                    for row in cur.fetchall()
+                ]
+        finally:
+            conn.close()
+
+    def update_chunk_embeddings(
+        self,
+        document_id: str,
+        chunks: list[dict],
+        model_name: str,
+    ) -> None:
+        """Persist Phase 2 vectors and their citation-tracing metadata."""
+        collection_id = self.get_document_collection_id(document_id)
+        if not collection_id:
+            raise ValueError(f"Document {document_id} was not found")
+
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                for chunk in chunks:
+                    embedding = chunk.get("embedding")
+                    if not embedding:
+                        continue
+                    if len(embedding) != BGE_M3_DIMENSIONS:
+                        raise ValueError(
+                            f"Expected {BGE_M3_DIMENSIONS}-dimensional embedding, "
+                            f"got {len(embedding)}"
+                        )
+                    cur.execute(
+                        'UPDATE "DocumentChunk" SET embedding = %s WHERE id = %s AND "documentId" = %s',
+                        (embedding, chunk["id"], document_id),
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO "EmbeddingMetadata" (
+                            id, "modelName", dimensions, "similarityMetric",
+                            "vectorStore", "vectorId", "collectionId",
+                            "chunkId", "documentId", "createdAt"
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT ("chunkId") DO UPDATE SET
+                            "modelName" = EXCLUDED."modelName",
+                            dimensions = EXCLUDED.dimensions,
+                            "similarityMetric" = EXCLUDED."similarityMetric",
+                            "vectorStore" = EXCLUDED."vectorStore",
+                            "vectorId" = EXCLUDED."vectorId",
+                            "collectionId" = EXCLUDED."collectionId",
+                            "documentId" = EXCLUDED."documentId"
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            model_name,
+                            BGE_M3_DIMENSIONS,
+                            "cosine",
+                            "pgvector",
+                            f"pgvector:{chunk['id']}",
+                            collection_id,
+                            chunk["id"],
+                            document_id,
+                        ),
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     # -- Hybrid RRF search -------------------------------------------------
+
+    def hybrid_search(
+        self,
+        query: str,
+        query_embedding: list,
+        collection_id: Optional[str],
+        document_ids: Optional[list[str]] = None,
+        top_k: int = 40,
+    ) -> list:
+        """Return independent semantic and keyword candidates for Phase 3.
+
+        This deliberately does not fuse or rerank results. RRF belongs to the
+        next phase, so each result retains its retrieval source and rank.
+        """
+        if len(query_embedding) != BGE_M3_DIMENSIONS:
+            raise ValueError(
+                f"Expected {BGE_M3_DIMENSIONS}-dimensional query embedding, got {len(query_embedding)}"
+            )
+
+        if document_ids:
+            base_filter = 'WHERE d.id = ANY(%s)'
+            filter_params = (document_ids,)
+        elif collection_id:
+            base_filter = 'WHERE d."collectionId" = %s'
+            filter_params = (collection_id,)
+        else:
+            base_filter = "WHERE TRUE"
+            filter_params = ()
+
+        sql = f"""
+        WITH semantic_candidates AS (
+            SELECT
+                c.id, c."documentId", d.title AS "documentTitle",
+                c."chunkIndex", c.content, c."pageNumber", c.metadata,
+                ROW_NUMBER() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
+            FROM "DocumentChunk" c
+            JOIN "Document" d ON c."documentId" = d.id
+            {base_filter} AND c.embedding IS NOT NULL
+            ORDER BY c.embedding <=> %s::vector
+            LIMIT %s
+        ),
+        keyword_candidates AS (
+            SELECT
+                c.id, c."documentId", d.title AS "documentTitle",
+                c."chunkIndex", c.content, c."pageNumber", c.metadata,
+                ROW_NUMBER() OVER (
+                    ORDER BY ts_rank_cd(
+                        to_tsvector('english', c.content),
+                        plainto_tsquery('english', %s)
+                    ) DESC
+                ) AS rank
+            FROM "DocumentChunk" c
+            JOIN "Document" d ON c."documentId" = d.id
+            {base_filter}
+            ORDER BY ts_rank_cd(
+                to_tsvector('english', c.content),
+                plainto_tsquery('english', %s)
+            ) DESC
+            LIMIT %s
+        )
+        SELECT id, "documentId", "documentTitle", "chunkIndex", content,
+               "pageNumber", metadata, 'semantic' AS source, rank
+        FROM semantic_candidates
+        UNION ALL
+        SELECT id, "documentId", "documentTitle", "chunkIndex", content,
+               "pageNumber", metadata, 'keyword' AS source, rank
+        FROM keyword_candidates
+        ORDER BY source, rank
+        """
+        params = (
+            query_embedding,
+            *filter_params,
+            query_embedding,
+            top_k,
+            query,
+            *filter_params,
+            query,
+            top_k,
+        )
+
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                return [
+                    {
+                        "id": row[0],
+                        "documentId": row[1],
+                        "documentTitle": row[2],
+                        "chunkIndex": row[3],
+                        "content": row[4],
+                        "pageNumber": row[5],
+                        "metadata": _json_dict(row[6]),
+                        "retrievalSource": row[7],
+                        "retrievalRank": int(row[8]),
+                    }
+                    for row in cur.fetchall()
+                ]
+        finally:
+            conn.close()
 
     def search(
         self,
@@ -297,6 +528,7 @@ class PgStore:
                 c."chunkIndex",
                 c.content,
                 c."pageNumber",
+                c.metadata,
                 RANK() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
             FROM "DocumentChunk" c
             JOIN "Document" d ON c."documentId" = d.id
@@ -315,6 +547,7 @@ class PgStore:
                 c."chunkIndex",
                 c.content,
                 c."pageNumber",
+                c.metadata,
                 RANK() OVER (
                     ORDER BY ts_rank_cd(to_tsvector('english', c.content), keyword_query.query) DESC
                 ) AS rank
@@ -332,6 +565,7 @@ class PgStore:
             COALESCE(s."chunkIndex", k."chunkIndex") AS "chunkIndex",
             COALESCE(s.content, k.content) AS content,
             COALESCE(s."pageNumber", k."pageNumber") AS "pageNumber",
+            COALESCE(s.metadata, k.metadata) AS metadata,
             COALESCE(1.0 / (60.0 + s.rank), 0.0)
               + COALESCE(1.0 / (60.0 + k.rank), 0.0) AS score
         FROM semantic_search s
@@ -362,7 +596,8 @@ class PgStore:
                         "chunkIndex": row[3],
                         "content": row[4],
                         "pageNumber": row[5],
-                        "score": float(row[6] or 0.0),
+                        "metadata": _json_dict(row[6]),
+                        "score": float(row[7] or 0.0),
                     }
                     for row in rows
                 ]

@@ -11,7 +11,6 @@ import { CollectionsService } from '../collections/collections.service';
 import { EventsGateway } from '../gateway/events.gateway';
 import { DocumentProcessingQueueService } from '../processing/document-processing-queue.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SemanticScholarService } from './semantic-scholar.service';
 
 type AiChunkPayload = {
   chunk_id?: string;
@@ -66,7 +65,6 @@ export class DocumentsService {
     private readonly collectionsService: CollectionsService,
     private readonly events: EventsGateway,
     private readonly processingQueue: DocumentProcessingQueueService,
-    private readonly semanticScholarService: SemanticScholarService,
   ) {}
 
   async create(file: Express.Multer.File, collectionId: string, userId: string): Promise<Document> {
@@ -102,27 +100,6 @@ export class DocumentsService {
       );
       // Do NOT throw — return the document so the frontend shows "Upload successful"
     }
-
-    // Asynchronously fetch metadata from Semantic Scholar
-    this.semanticScholarService.fetchPaperMetadata(title).then(async (metadata) => {
-      if (metadata) {
-        const doc = await this.prisma.document.findUnique({ where: { id: document.id } });
-        if (doc) {
-          const updatedDoc = await this.prisma.document.update({
-            where: { id: document.id },
-            data: {
-              metadata: {
-                ...(typeof doc.metadata === 'object' && doc.metadata ? doc.metadata : {}),
-                citationsCount: metadata.citationCount,
-                authors: metadata.authors,
-                year: metadata.year,
-              },
-            },
-          });
-          this.events.emitStatusChanged(collectionId, updatedDoc);
-        }
-      }
-    }).catch(e => this.logger.error(`Error in async semantic scholar fetch: ${e.message}`));
 
     return document;
   }

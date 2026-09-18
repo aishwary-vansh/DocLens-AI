@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import List, Optional, Dict, Any
 
 from langchain_core.documents import Document as LCDocument
@@ -86,6 +87,8 @@ def _chunks_to_context(docs: List[LCDocument]) -> str:
             f"document_id: {meta.get('document_id', 'unknown')}\n"
             f"document_title: {meta.get('document_title', 'Unknown document')}\n"
             f"page: {meta.get('page_number', 'N/A')}\n"
+            f"evidence_type: {meta.get('content_type', 'page_text')}\n"
+            f"section: {meta.get('section', 'N/A')}\n"
             f"---\n{doc.page_content}\n"
         )
     return "\n".join(parts)
@@ -101,6 +104,8 @@ def _docs_to_raw_chunks(docs: List[LCDocument]) -> list:
             "content":     doc.page_content,
             "pageNumber":  doc.metadata.get("page_number"),
             "chunkIndex":  doc.metadata.get("chunk_index"),
+            "contentType":  doc.metadata.get("content_type", "page_text"),
+            "section":      doc.metadata.get("section", ""),
             "score":       doc.metadata.get("score", 0.0),
         }
         for doc in docs
@@ -121,6 +126,9 @@ RULES:
 5. source_text must be a near-verbatim excerpt (not paraphrase) from the evidence.
 6. Citations should point only to evidence that directly supports the specific claim.
 7. Be precise and academic in tone.
+8. For evidence_type=table, preserve the table's labels and values.
+9. For evidence_type=figure_or_table, distinguish visible observations from
+   author-reported conclusions and explicitly say when a value is not legible.
 
 OUTPUT FORMAT: You must respond with valid JSON matching this schema exactly:
 {format_instructions}"""
@@ -234,8 +242,28 @@ class DocLensRAGChain:
             except Exception as e:
                 logger.warning("Query rewriting failed, using original: %s", e)
 
-        # ── Step 2: Retrieve (RRF + BGE reranking inside retriever) ─────────
-        docs = self._retriever.invoke(effective_question)
+        # ── Step 2: Multi-query retrieval (RRF + BGE reranking) ─────────────
+        # Split compound research questions into bounded facets without another
+        # model call, then merge by chunk id so one facet cannot duplicate context.
+        facets = [
+            part.strip()
+            for part in re.split(
+                r"\s+(?:and|also|while|versus|vs\.?)\s+|[?;]",
+                effective_question,
+                flags=re.IGNORECASE,
+            )
+            if len(part.strip().split()) >= 3
+        ]
+        queries = list(dict.fromkeys([effective_question, *facets[:3]]))
+        retrieved = []
+        for retrieval_query in queries:
+            retrieved.extend(self._retriever.invoke(retrieval_query))
+        docs_by_id = {}
+        for doc in retrieved:
+            chunk_id = doc.metadata.get("chunk_id")
+            if chunk_id and chunk_id not in docs_by_id:
+                docs_by_id[chunk_id] = doc
+        docs = list(docs_by_id.values())[: max(self._retriever.top_k, 10)]
 
         if not docs:
             return StructuredAnswer(
@@ -279,7 +307,18 @@ class DocLensRAGChain:
         validated_citations = validate_citations(result.citations, raw_chunks)
 
         # ── Step 6: Claim verification (NO EVIDENCE = NO CLAIM) ──────────────
-        verified_claims = verify_claims(result.claims)
+        claims_with_valid_citations = [
+            claim.model_copy(
+                update={
+                    "supported_by": validate_citations(
+                        claim.supported_by,
+                        raw_chunks,
+                    )
+                }
+            )
+            for claim in result.claims
+        ]
+        verified_claims = verify_claims(claims_with_valid_citations)
         ucr = unsupported_claim_rate(verified_claims)
         if ucr > 0:
             logger.warning(

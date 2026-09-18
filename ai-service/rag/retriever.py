@@ -19,6 +19,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from pydantic import model_validator
 
 logger = logging.getLogger(__name__)
+RRF_K = 60
 
 
 def _sigmoid_score(value: float) -> float:
@@ -26,6 +27,27 @@ def _sigmoid_score(value: float) -> float:
         return 1.0 / (1.0 + math.exp(-float(value)))
     except OverflowError:
         return 0.0 if value < 0 else 1.0
+
+
+def reciprocal_rank_fusion(candidates: List[dict], top_k: int) -> List[dict]:
+    """Fuse independent semantic/keyword candidates without losing provenance."""
+    fused: dict[str, dict] = {}
+    for candidate in candidates:
+        chunk_id = candidate.get("id")
+        if not chunk_id:
+            continue
+        entry = fused.setdefault(chunk_id, {**candidate, "rrf_score": 0.0, "retrieval_sources": []})
+        rank = int(candidate.get("retrievalRank", 0))
+        if rank > 0:
+            entry["rrf_score"] += 1.0 / (RRF_K + rank)
+        source = candidate.get("retrievalSource")
+        if source and source not in entry["retrieval_sources"]:
+            entry["retrieval_sources"].append(source)
+    return sorted(
+        fused.values(),
+        key=lambda item: item["rrf_score"],
+        reverse=True,
+    )[:top_k]
 
 
 class DocLensRetriever(BaseRetriever):
@@ -100,14 +122,15 @@ class DocLensRetriever(BaseRetriever):
         # Step 1 — embed query
         query_embedding = self._embed_model.encode(query, normalize_embeddings=True).tolist()
 
-        # Step 2 — existing RRF hybrid search (SQL unchanged)
-        candidates = self._pg_store.search(
+        # Step 2 — independent hybrid candidates, then explicit RRF fusion
+        hybrid_candidates = self._pg_store.hybrid_search(
             query,
             query_embedding,
             self.collection_id,
             self.document_ids,
             top_k=self.rerank_top_k,
         )
+        candidates = reciprocal_rank_fusion(hybrid_candidates, self.rerank_top_k)
 
         if not candidates:
             logger.warning("DocLensRetriever: no candidates returned from RRF search")
@@ -134,8 +157,11 @@ class DocLensRetriever(BaseRetriever):
                         "document_title": chunk.get("documentTitle", ""),
                         "page_number":   chunk.get("pageNumber"),
                         "chunk_index":   chunk.get("chunkIndex"),
+                        "content_type":  chunk.get("metadata", {}).get("content_type", "page_text"),
+                        "section":        chunk.get("metadata", {}).get("section", ""),
                         "score":         chunk["rerank_score"],
-                        "rrf_score":     chunk.get("score", 0.0),
+                        "rrf_score":     chunk.get("rrf_score", 0.0),
+                        "retrieval_sources": chunk.get("retrieval_sources", []),
                     },
                 )
             )

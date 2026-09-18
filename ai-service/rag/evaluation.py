@@ -165,6 +165,40 @@ def citation_correctness(citations: List[CitationRef], retrieved_chunks: List[Di
     return correct / len(citations)
 
 
+def citation_precision(citations: List[CitationRef], retrieved_chunks: List[Dict]) -> float:
+    """Fraction of generated citations that resolve to valid evidence."""
+    if not citations:
+        return 1.0
+    valid_ids = {
+        chunk.get("id") or chunk.get("chunk_id")
+        for chunk in retrieved_chunks
+    }
+    return sum(citation.chunk_id in valid_ids for citation in citations) / len(citations)
+
+
+def citation_coverage(answer: StructuredAnswer) -> float:
+    """Fraction of claims that have at least one citation."""
+    if not answer.claims:
+        return 1.0 if answer.insufficient_evidence else 0.0
+    return sum(bool(claim.supported_by) for claim in answer.claims) / len(answer.claims)
+
+
+def reranking_improvement(
+    pre_rerank_ids: List[str],
+    post_rerank_ids: List[str],
+    relevant_ids: List[str],
+) -> Optional[float]:
+    """Difference in Recall@K before and after reranking."""
+    if not relevant_ids:
+        return None
+    k = max(len(pre_rerank_ids), len(post_rerank_ids))
+    return recall_at_k(post_rerank_ids, relevant_ids, k) - recall_at_k(
+        pre_rerank_ids,
+        relevant_ids,
+        k,
+    )
+
+
 # ── Negative test: unanswerable question ─────────────────────────────────────
 
 def test_unanswerable(answer: StructuredAnswer, question: str) -> Tuple[bool, str]:
@@ -212,6 +246,7 @@ class EvaluationReport:
         self.retrieved_chunks = retrieved_chunks
         self.relevant_ids = relevant_chunk_ids or []
         self.k = k
+        self.latency_ms: Optional[float] = None
 
     def run(self) -> Dict[str, Any]:
         retrieved_ids = [c.get("id", c.get("chunk_id", "")) for c in self.retrieved_chunks]
@@ -237,7 +272,10 @@ class EvaluationReport:
         report["faithfulness"]         = faithfulness_score(self.answer.answer, self.retrieved_chunks)
         report["answer_relevance"]     = answer_relevance(self.question, self.answer.answer)
         report["citation_correctness"] = citation_correctness(self.answer.citations, self.retrieved_chunks)
+        report["citation_precision"] = citation_precision(self.answer.citations, self.retrieved_chunks)
+        report["citation_coverage"] = citation_coverage(self.answer)
         report["unsupported_claim_rate"] = unsupported_claim_rate(self.answer.claims)
+        report["latency_ms"] = self.latency_ms
 
         logger.info(
             "Evaluation — faithfulness=%.2f relevance=%.2f citation_correctness=%.2f ucr=%.2f",

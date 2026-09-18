@@ -6,7 +6,7 @@
 # ── Stage 1: Python dependencies ───────────────────────────────────────────────
 FROM python:3.11-slim AS deps
 
-# System libraries required by psycopg2, docling, and torch
+# System libraries required by psycopg2, PyMuPDF, and torch
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libpq5 \

@@ -37,6 +37,7 @@ def _token_overlap(a: str, b: str) -> float:
 
 EVIDENCE_OVERLAP_THRESHOLD = 0.15   # min Jaccard to consider a citation supportive
 MIN_CLAIM_COVERAGE = 3              # min tokens a claim must have to be verifiable
+CITATION_SOURCE_OVERLAP_THRESHOLD = 0.05
 
 
 def verify_single_claim(claim_text: str, citations: List[CitationRef]) -> Tuple[bool, List[CitationRef]]:
@@ -122,17 +123,19 @@ def validate_citations(citations: List[CitationRef], retrieved_chunks: list) -> 
         )
 
         # Verify source_text overlap with chunk content
+        if not cit.source_text:
+            logger.warning("Citation removed — source_text is empty: chunk_id=%s", cit.chunk_id)
+            continue
         if cit.source_text and chunk_content:
             overlap = _token_overlap(cit.source_text, chunk_content)
-            if overlap < 0.05:
+            if overlap < CITATION_SOURCE_OVERLAP_THRESHOLD:
                 logger.warning(
                     "Citation source_text has very low overlap with chunk content "
                     "(overlap=%.2f) — possible hallucination: chunk_id=%s",
                     overlap,
                     cit.chunk_id,
                 )
-                # Keep citation but flag: the source_text may be paraphrased
-                # Don't remove — removing would break citation count
+                continue
         valid_citations.append(cit)
 
     return valid_citations

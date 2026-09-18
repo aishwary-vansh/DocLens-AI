@@ -1,4 +1,21 @@
 services:
+  # ── PostgreSQL + pgvector (self-contained development deployment) ─────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-doclens}
+      POSTGRES_USER: ${POSTGRES_USER:-doclens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doclens-dev-password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-doclens} -d ${POSTGRES_DB:-doclens}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # ── Redis ─────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
@@ -19,9 +36,12 @@ services:
       context: ./backend
       target: build
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://doclens:doclens-dev-password@postgres:5432/doclens}
     command: ["npx", "prisma", "migrate", "deploy"]
     restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ── NestJS backend ────────────────────────────────────────────────────────
   backend:
@@ -30,7 +50,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://doclens:doclens-dev-password@postgres:5432/doclens}
       REDIS_URL: redis://redis:6379
       # Inter-container URL for AI service — never use localhost here
       AI_SERVICE_URL: http://ai-service:8000
@@ -49,6 +69,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
       backend-migrate:
         condition: service_completed_successfully
       ai-service:
@@ -64,9 +86,11 @@ services:
     build:
       context: ./ai-service
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://doclens:doclens-dev-password@postgres:5432/doclens}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       LLM_MODEL: ${LLM_MODEL:-gemini-1.5-flash}
+      VISION_ENABLED: ${VISION_ENABLED:-true}
+      VISION_MAX_PAGES: ${VISION_MAX_PAGES:-12}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       PORT: 8000
     ports:
@@ -84,6 +108,9 @@ services:
       # Long start period: first startup downloads large models
       start_period: 180s
       retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # ── Nginx / React frontend ────────────────────────────────────────────────
   frontend:
@@ -96,6 +123,7 @@ services:
         condition: service_healthy
 
 volumes:
+  postgres-data:
   redis-data:
   backend-uploads:
   huggingface-cache:

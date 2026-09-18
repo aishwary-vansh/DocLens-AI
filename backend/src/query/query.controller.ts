@@ -70,6 +70,27 @@ export class QueryController {
     );
   }
 
+  @Post('search/hybrid')
+  @ApiOperation({ summary: 'Phase 3 hybrid semantic and keyword candidates' })
+  hybridSearch(
+    @Body()
+    body: {
+      query: string;
+      collectionId: string;
+      topK?: number;
+      documentIds?: string[];
+    },
+    @CurrentUser() user: any,
+  ) {
+    return this.queryService.hybridSearch(
+      body.query,
+      body.collectionId,
+      body.topK,
+      body.documentIds,
+      user.id,
+    );
+  }
+
   @Post('summarise')
   @ApiOperation({ summary: 'Summarise a document with citations' })
   summarise(@Body() body: { documentId: string }, @CurrentUser() user: any) {

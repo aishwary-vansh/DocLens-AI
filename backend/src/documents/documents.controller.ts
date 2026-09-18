@@ -13,6 +13,7 @@ import {
   HttpStatus,
   Body,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import { CacheInterceptor } from '@nestjs/cache-manager';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -79,6 +80,9 @@ export class DocumentsController {
     @Body('collectionId') collectionId: string,
     @CurrentUser() user: any,
   ) {
+    if (!collectionId?.trim()) {
+      throw new BadRequestException('collectionId is required');
+    }
     return this.documentsService.create(file, collectionId, user.id);
   }
 

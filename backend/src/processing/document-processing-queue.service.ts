@@ -74,10 +74,24 @@ export class DocumentProcessingQueueService {
       });
       this.events.emitStatusChanged(collectionId, extractingDoc);
 
-      // Actually send it to the AI Service for ingestion
-      const result = await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
-      if (result?.status && result.status !== 'completed') {
-        throw new Error(result.message || `AI ingestion returned status ${result.status}`);
+      const extraction = await this.aiProxy.processDocument(documentId, absoluteFilePath, collectionId);
+      if (extraction?.status && extraction.status !== 'completed') {
+        throw new Error(extraction.message || `AI ingestion returned status ${extraction.status}`);
+      }
+
+      await this.prisma.processingJob.update({
+        where: { id: processingJobId },
+        data: { stage: 'EMBEDDING', progress: 70, lastHeartbeatAt: new Date() },
+      });
+      const embeddingDoc = await this.prisma.document.update({
+        where: { id: documentId },
+        data: { status: 'EMBEDDING', processingProgress: 70 },
+      });
+      this.events.emitStatusChanged(collectionId, embeddingDoc);
+
+      const embedding = await this.aiProxy.embedDocument(documentId);
+      if (embedding?.status && embedding.status !== 'completed') {
+        throw new Error(embedding.message || `Embedding returned status ${embedding.status}`);
       }
 
       await this.prisma.processingJob.update({

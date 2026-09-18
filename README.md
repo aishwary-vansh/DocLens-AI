@@ -1,990 +1,631 @@
 # DocLens AI
 
-## A Citation-First Research Intelligence Platform
+## Citation-First Research Intelligence Platform
 
-DocLens AI is a full-stack research intelligence platform that transforms static research papers into an interactive, evidence-grounded research system.
+DocLens AI turns research papers into an evidence-grounded research workspace.
+Researchers can upload papers, organize them into workspaces and collections,
+search across documents, ask questions, compare papers, generate literature
+reviews, and trace answers back to page-level source evidence.
 
-Researchers can organize papers into collections, search their content semantically, ask questions across documents, generate multi-paper comparisons and literature reviews, and explore relationships between research entities through a Knowledge Graph.
+The platform follows one core rule:
 
-The core principle is:
+> **No evidence = no claim**
 
-> **NO EVIDENCE = NO CLAIM**
-
-DocLens prioritizes grounded responses and traceability by connecting AI-generated answers to retrieved evidence and source citations.
+The implementation is intentionally separated into a lightweight application
+control plane and a Python AI service. The NestJS backend owns authentication,
+authorization, uploads, persistence, and API contracts. The FastAPI service owns
+PDF extraction, embeddings, retrieval, generation, and verification.
 
 ---
 
-## 🎯 Core Capabilities
+## Core capabilities
 
-### 1. Research Collections & Library
+- Workspace, collection, and paper library management
+- Authenticated PDF upload with processing status
+- PyMuPDF text extraction with page metadata
+- Section-aware text chunking
+- Native PDF table evidence extraction
+- Figure/caption evidence representation
+- BGE-M3 embeddings stored in PostgreSQL with pgvector
+- Hybrid semantic and keyword retrieval
+- Reciprocal Rank Fusion (RRF)
+- BGE cross-encoder reranking
+- Conversational multi-paper Q&A
+- Follow-up question rewriting and bounded multi-query retrieval
+- Structured Gemini answers
+- Page- and chunk-level citations
+- Citation overlap validation and claim verification
+- Paper comparison
+- Literature-review generation
+- Research notes and reading progress
+- Retrieval, citation, grounding, and latency evaluation
 
-* Organize research papers into collections
-* Workspace-based document management
-* PDF library
-* Document processing status
-* User authentication and access control
+The current ingestion path does not use Docling, Semantic Scholar, a separate
+vector database, or a mandatory knowledge-graph processing stage.
 
-### 2. PDF Ingestion
+---
 
-Research papers are automatically processed through:
+# System architecture
 
 ```text
-PDF
- ↓
-Docling Parsing
- ↓
-Hierarchical Chunking
- ↓
-BGE-M3 Embeddings
- ↓
-PostgreSQL + pgvector
+                                Browser
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │ React + Vite + Tailwind      │
+                    │ Research workspace UI        │
+                    └──────────────┬───────────────┘
+                                   │ REST / WebSocket
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │ NestJS Backend                │
+                    │ Auth, ACL, APIs, persistence  │
+                    │ Uploads, jobs, AI proxy       │
+                    └───────┬──────────────┬─────────┘
+                            │              │
+                            ▼              ▼
+                 ┌────────────────┐  ┌──────────────────────┐
+                 │ Redis          │  │ FastAPI AI Service   │
+                 │ Cache/session  │  │ Ingestion and RAG    │
+                 │ job coordination│ │ Models and evaluation│
+                 └────────────────┘  └──────────┬───────────┘
+                                                │
+                                                ▼
+                         ┌──────────────────────────────────┐
+                         │ PostgreSQL + pgvector             │
+                         │ Application data, chunks, vectors │
+                         └──────────────────────────────────┘
+                                                ▲
+                                                │
+                         ┌──────────────────────┴────────────┐
+                         │ Persistent PDF upload volume       │
+                         │ Backend read/write, AI read-only   │
+                         └───────────────────────────────────┘
 ```
 
-### 3. Conversational Research Chat
+## Service responsibilities
 
-Ask questions about documents in your research collections.
-
-The RAG pipeline uses:
-
-```text
-Question
- ↓
-Conditional Query Rewriting
- ↓
-RRF Hybrid Retrieval
- ↓
-BGE Reranking
- ↓
-Evidence Selection
- ↓
-Gemini Structured Output
- ↓
-Claim Verification
- ↓
-Citation Validation
- ↓
-Final Answer
-```
-
-### 4. Evidence-Grounded Answers
-
-DocLens verifies generated claims against retrieved evidence and validates citations against source chunks.
-
-The goal is to prevent unsupported claims and provide researchers with a direct path from an answer back to the original paper.
-
-### 5. Literature Reviews
-
-Generate structured multi-paper research synthesis using retrieved evidence.
-
-### 6. Paper Comparisons
-
-Compare multiple papers across:
-
-* Methods
-* Datasets
-* Models
-* Metrics
-* Findings
-* Similarities
-* Differences
-* Limitations
-
-### 7. Knowledge Graph
-
-Extract research entities and relationships from documents.
-
-Supported entity types include:
-
-* Authors
-* Concepts
-* Datasets
-* Methods
-* Metrics
-* Models
-
-Knowledge Graph extraction runs asynchronously and stores results in PostgreSQL.
-
-### 8. RAG Evaluation
-
-Built-in evaluation support includes:
-
-* Recall@K
-* MRR
-* Faithfulness
-* Answer Relevance
-* Citation Correctness
-* Unsupported Claim Rate
-* Negative/Insufficient-Evidence testing
+| Service | Responsibility |
+| --- | --- |
+| Frontend | Research UI, uploads, chat, citations, comparison, reviews |
+| NestJS backend | Authentication, authorization, API contracts, uploads, persistence, orchestration |
+| FastAPI AI service | PDF extraction, chunking, embeddings, retrieval, reranking, generation, verification |
+| PostgreSQL | Users, workspaces, documents, chunks, chats, citations, reviews, notes |
+| pgvector | 1024-dimensional BGE-M3 chunk embeddings |
+| Redis | Cache, session support, and processing coordination |
+| Upload volume | Persistent PDF files shared between backend and AI service |
 
 ---
 
-# 🏗️ System Architecture
-
-DocLens is a monorepo containing a React frontend, NestJS backend, and Python FastAPI AI service.
+# Repository structure
 
 ```text
-                         Browser
-                            │
-                            ▼
-                  ┌──────────────────┐
-                  │ React + Vite     │
-                  │ Nginx            │
-                  └────────┬─────────┘
-                           │
-                           ▼
-                  ┌──────────────────┐
-                  │ NestJS Backend   │
-                  │ TypeScript       │
-                  │ Auth / API / ACL │
-                  └───────┬──────────┘
-                          │
-             ┌────────────┴────────────┐
-             │                         │
-             ▼                         ▼
-      ┌──────────────┐        ┌──────────────────┐
-      │ Redis        │        │ FastAPI AI       │
-      │ Cache        │        │ Semantic Engine  │
-      └──────────────┘        └────────┬─────────┘
-                                       │
-                                       ▼
-                              ┌──────────────────┐
-                              │ Supabase         │
-                              │ PostgreSQL       │
-                              │ + pgvector       │
-                              └──────────────────┘
-```
-
----
-
-# 🧰 Technology Stack
-
-## Frontend
-
-| Technology    | Purpose                       |
-| ------------- | ----------------------------- |
-| React 18      | UI                            |
-| Vite          | Build tooling                 |
-| Tailwind CSS  | Styling                       |
-| Vanilla CSS   | Custom styling                |
-| React Context | State management              |
-| Nginx         | Production web server / proxy |
-
-## Backend
-
-| Technology | Purpose              |
-| ---------- | -------------------- |
-| NestJS     | Core API             |
-| TypeScript | Backend language     |
-| Prisma     | ORM                  |
-| PostgreSQL | Application database |
-| pgvector   | Vector storage       |
-| Redis      | Caching              |
-| JWT        | Authentication       |
-
-## AI Service
-
-| Technology            | Purpose                     |
-| --------------------- | --------------------------- |
-| FastAPI               | AI service API              |
-| LangChain             | RAG orchestration           |
-| Docling               | PDF parsing                 |
-| BGE-M3                | Embeddings                  |
-| BGE Reranker v2 M3    | Reranking                   |
-| PostgreSQL + pgvector | Vector database             |
-| Gemini                | LLM                         |
-| Pydantic v2           | Structured outputs          |
-| PyTorch               | ML runtime                  |
-| Sentence Transformers | Embedding/reranking runtime |
-
----
-
-# 📁 Project Structure
-
-```text
-doclens-fullstack/
-
+DocLens-AI/
 ├── frontend/
 │   ├── src/
-│   ├── nginx.conf
+│   │   ├── components/       # Reusable UI components
+│   │   ├── contexts/         # Auth and application state
+│   │   ├── pages/            # Workspace, library, chat, comparison, review views
+│   │   ├── services/         # Backend API clients
+│   │   ├── hooks/            # Frontend hooks
+│   │   ├── types/            # Frontend types
+│   │   ├── App.*             # Application shell and routes
+│   │   └── main.*            # Browser entrypoint
 │   ├── Dockerfile
-│   └── package.json
+│   ├── nginx.conf
+│   ├── package.json
+│   └── vite.config.*
 │
 ├── backend/
 │   ├── src/
-│   │   ├── auth/
-│   │   ├── users/
-│   │   ├── collections/
-│   │   ├── documents/
-│   │   ├── query/
-│   │   └── ...
+│   │   ├── auth/             # Registration, login, JWT, guards
+│   │   ├── users/            # User APIs
+│   │   ├── workspaces/       # Workspace APIs
+│   │   ├── collections/      # Collection APIs
+│   │   ├── documents/        # Uploads, document metadata, access checks
+│   │   ├── processing/       # Ingestion and embedding job orchestration
+│   │   ├── query/            # Search, chat, comparisons, literature reviews
+│   │   ├── ai-proxy/         # NestJS-to-FastAPI client
+│   │   ├── gateway/          # WebSocket updates
+│   │   ├── prisma/           # Prisma service and database access
+│   │   ├── common/           # Shared guards, DTOs, and utilities
+│   │   ├── config/           # Environment configuration
+│   │   ├── app.module.ts
+│   │   └── main.ts
 │   ├── prisma/
+│   │   ├── schema.prisma
+│   │   └── migrations/
 │   ├── Dockerfile
-│   └── package.json
+│   ├── package.json
+│   └── tsconfig.json
 │
 ├── ai-service/
-│   ├── main.py
-│   ├── ingest.py
-│   ├── query.py
+│   ├── main.py               # FastAPI endpoints
+│   ├── ingest.py             # PyMuPDF extraction, chunking, embeddings
+│   ├── query.py              # AI use cases: ask, summarize, compare, review
 │   ├── requirements.txt
 │   ├── Dockerfile
-│   │
 │   ├── rag/
-│   │   ├── chain.py
-│   │   ├── retriever.py
-│   │   ├── schemas.py
-│   │   ├── verification.py
-│   │   ├── kg_extractor.py
-│   │   └── evaluation.py
-│   │
+│   │   ├── chain.py          # Conversational RAG and structured generation
+│   │   ├── retriever.py      # Hybrid candidates, RRF, reranking adapter
+│   │   ├── schemas.py        # Structured answers, claims, citations, reviews
+│   │   ├── verification.py   # Claim and citation validation
+│   │   ├── evaluation.py     # Retrieval and grounding metrics
+│   │   └── test_phase_pipeline.py
 │   └── vector_store/
-│       └── pg_store.py
+│       └── pg_store.py       # PostgreSQL/pgvector persistence and search
 │
-├── docker-compose.yml
-├── .env.example
+├── docker-compose.yml        # PostgreSQL, Redis, migrations, backend, AI, frontend
+├── package.json              # Workspace commands
+├── .env.example              # Environment variable template
 └── README.md
 ```
 
 ---
 
-# 🧠 RAG Architecture
+# Document ingestion pipeline
 
-DocLens uses LangChain to orchestrate the RAG workflow while preserving the existing PostgreSQL RRF retrieval implementation.
+Ingestion is intentionally separate from answering questions.
 
 ```text
-                         User Question
-                              │
-                              ▼
-                  Conditional Query Rewrite
-                              │
-                              ▼
-                       RRF Retrieval
-                              │
-                              ▼
-                        BGE Reranker
-                              │
-                              ▼
-                       Evidence Set
-                              │
-                              ▼
-                  LangChain RAG Pipeline
-                              │
-                              ▼
-                 Gemini Structured Output
-                              │
-                              ▼
-                    Claim Verification
-                              │
-                              ▼
-                    Citation Validation
-                              │
-                              ▼
-                         Answer
+PDF upload
+    │
+    ▼
+NestJS validation and persistent file storage
+    │
+    ▼
+Processing job
+    │
+    ▼
+FastAPI POST /ingest
+    │
+    ▼
+PyMuPDF extraction
+    │
+    ├── Page text and document metadata
+    ├── Section detection
+    ├── Section-aware text chunks
+    ├── Native table evidence
+    └── Figure/caption evidence
+    │
+    ▼
+DocumentChunk records in PostgreSQL
+    │
+    ▼
+FastAPI POST /embed
+    │
+    ▼
+BAAI/bge-m3, 1024 dimensions
+    │
+    ▼
+pgvector + EmbeddingMetadata
+    │
+    ▼
+Document status = READY
 ```
 
-The existing RRF SQL retrieval is retained instead of replacing it with a generic LangChain vector store.
+## Evidence representation
 
-This allows LangChain to provide orchestration while maintaining the existing retrieval architecture.
+Every persisted chunk contains content plus metadata such as:
+
+```json
+{
+  "pageNumber": 7,
+  "chunkIndex": 12,
+  "contentType": "table",
+  "section": "Experiments",
+  "contentHash": "..."
+}
+```
+
+Text chunks preserve page and section context. Native tables are represented as
+searchable Markdown-like content with table indexes. Figure evidence preserves
+the page, caption, image count, and section. This allows answers to identify
+visual evidence and connect it to surrounding paper text.
+
+The base ingestion path records figure evidence and captions; full pixel-level
+interpretation of arbitrary charts, diagrams, and scanned pages is not assumed
+for every document.
 
 ---
 
-# 📄 Document Processing
+# Data model
 
-The ingestion service processes research papers using Docling and hierarchical chunking.
+The canonical schema is in `backend/prisma/schema.prisma`.
 
 ```text
-Research PDF
-     │
-     ▼
-   Docling
-     │
-     ▼
-Document Structure
-     │
-     ▼
-Hierarchical Chunks
-     │
-     ▼
-   BGE-M3
-     │
-     ▼
-1024-D Embeddings
-     │
-     ▼
-PostgreSQL / pgvector
+User
+ └── Workspace
+      └── Collection
+           └── Document
+                ├── DocumentChunk
+                ├── EmbeddingMetadata
+                ├── ProcessingJob
+                ├── DocumentEntity
+                └── Relationship
+
+User
+ ├── ChatSession ── Query ── Citation ── DocumentChunk
+ ├── PaperComparison
+ ├── LiteratureReview
+ ├── ResearchNote
+ └── ReadingProgress
 ```
 
-The resulting embeddings are available for semantic and hybrid retrieval.
+Important models:
+
+- `User`: identity, role, authentication, and ownership relationships
+- `Workspace`: top-level research environment
+- `Collection`: thematic grouping of documents
+- `Document`: uploaded PDF metadata and processing state
+- `DocumentChunk`: persistent text/table/figure evidence unit
+- `EmbeddingMetadata`: model, dimensions, vector-store, and chunk linkage
+- `ChatSession`, `Query`, and `Citation`: conversational history and traceability
+- `PaperComparison`: multi-paper comparison result
+- `LiteratureReview`: generated review sections and Markdown output
+- `ResearchNote`: user-authored research notes
+- `ReadingProgress`: document reading state
+
+Document processing states include:
+
+```text
+PENDING → UPLOADED → EXTRACTING → CHUNKING → EMBEDDING → INDEXING → READY
+                                      └──────────────────────────────→ FAILED
+```
 
 ---
 
-# 🔎 Retrieval
-
-DocLens uses a hybrid retrieval architecture.
+# RAG architecture
 
 ```text
-              User Query
-                  │
-          ┌───────┴───────┐
-          ▼               ▼
-      Semantic         Lexical
-      Retrieval        Retrieval
-          │               │
-          └───────┬───────┘
-                  ▼
-               RRF
-                  │
-                  ▼
-            Candidate Set
-                  │
-                  ▼
-            BGE Reranker
-                  │
-                  ▼
-          Relevant Evidence
+Question and conversation history
+              │
+              ▼
+Conditional standalone-question rewrite
+              │
+              ▼
+Bounded multi-query expansion
+              │
+              ▼
+Query embedding with BGE-M3
+              │
+       ┌──────┴──────┐
+       ▼             ▼
+Semantic search   Keyword search
+       │             │
+       └──────┬──────┘
+              ▼
+Reciprocal Rank Fusion, k = 60
+              │
+              ▼
+BGE cross-encoder reranking
+              │
+              ▼
+Evidence context construction
+              │
+              ▼
+Gemini structured generation
+              │
+              ▼
+Claim verification
+              │
+              ▼
+Citation validation
+              │
+              ▼
+Grounded answer with citations
 ```
 
-RRF combines retrieval signals before BGE reranking selects the most relevant evidence.
+## Retrieval stages
+
+### Semantic retrieval
+
+The question is embedded with `BAAI/bge-m3` and compared with chunk vectors in
+pgvector. This handles conceptually similar wording.
+
+### Keyword retrieval
+
+The chunk text is searched for exact terms. This is important for model names,
+dataset names, acronyms, equations, identifiers, and numeric table values.
+
+### Reciprocal Rank Fusion
+
+Independent semantic and keyword candidate lists are combined using:
+
+```text
+RRF contribution = 1 / (60 + rank)
+```
+
+Chunks present in both lists receive contributions from both retrieval signals.
+Source and rank provenance are preserved in the result metadata.
+
+### Cross-encoder reranking
+
+The fused candidates are scored with:
+
+```text
+BAAI/bge-reranker-v2-m3
+```
+
+The reranker evaluates the complete `(question, chunk)` pair before final
+top-K evidence selection.
 
 ---
 
-# 🛡️ Grounding & Verification
+# Evidence-grounded generation
 
-DocLens follows:
+Retrieved chunks are converted into explicit evidence blocks:
 
-> **NO EVIDENCE = NO CLAIM**
+```text
+[Evidence 1]
+chunk_id: ...
+document_id: ...
+document_title: ...
+page: 8
+evidence_type: table
+section: Experiments
+---
+Original chunk content
+```
 
-The verification layer checks generated claims against retrieved evidence and validates citation references against document chunks.
+Gemini receives the evidence, question, and conversation context through the
+structured LangChain pipeline. The generation schema requires:
 
-The current verification mechanism uses heuristic text-overlap validation.
+- Claims to be supported by retrieved evidence
+- Exact chunk and document identifiers
+- Near-verbatim source excerpts
+- Explicit insufficient-evidence responses
+- Preservation of table labels and values
+- Separation of visible figure observations from author-reported conclusions
 
-This provides a lightweight grounding layer while keeping the system transparent about the limitations of automated verification.
-
-The system should be evaluated for:
-
-* Unsupported claims
-* Incorrect citations
-* Missing evidence
-* Irrelevant evidence
-* Hallucinated answers
+The AI response is parsed into typed Pydantic models rather than treated as
+unstructured text.
 
 ---
 
-# 🧾 Structured Outputs
+# Citation and claim verification
 
-Pydantic v2 schemas provide structured outputs for:
-
-* Answers
-* Citations
-* Claims
-* Paper comparisons
-* Literature reviews
-* Knowledge Graph entities
-* Knowledge Graph relationships
-
-Example conceptual structure:
+The verification layer runs after generation.
 
 ```text
-Structured Answer
-├── Answer
-├── Claims
-│   ├── Claim
-│   └── Citation
-└── Evidence
+Generated answer
+      │
+      ▼
+Extract claims and citations
+      │
+      ▼
+Check chunk/document identity
+      │
+      ▼
+Check non-empty source text
+      │
+      ▼
+Check source-text overlap
+      │
+      ▼
+Reject or remove unsupported citations/claims
+      │
+      ▼
+Persist final answer and citations
 ```
 
-Structured outputs make downstream validation and API responses more predictable.
+Validation rejects unknown chunk IDs, empty source excerpts, and citations with
+insufficient overlap against the retrieved source content. Evaluation tracks
+unsupported-claim rate and citation coverage.
 
 ---
 
-# 🕸️ Knowledge Graph
+# Research workflows
 
-The Knowledge Graph extracts research entities and relationships from documents.
+## Multi-paper Q&A
 
-```text
-                  Research Paper
-                        │
-                        ▼
-                Entity Extraction
-                        │
-                        ▼
-             Relationship Extraction
-                        │
-                        ▼
-              Structured Validation
-                        │
-                        ▼
-                   PostgreSQL
-                        │
-                        ▼
-                 Knowledge Graph
-```
+Questions can be scoped to a collection or selected document IDs. Access
+control is enforced by NestJS before the AI service is called.
 
-Example:
+## Paper comparison
 
-```text
-Author ──wrote──> Paper
-Paper ──uses──> Dataset
-Paper ──implements──> Method
-Method ──achieves──> Metric
-Paper ──discusses──> Concept
-```
+The comparison workflow synthesizes selected papers across:
 
-Extraction is performed asynchronously to avoid blocking the main document-processing workflow.
+- Methods
+- Datasets
+- Models
+- Metrics
+- Findings
+- Similarities
+- Differences
+- Limitations
 
-Because LLM-based extraction is probabilistic, Knowledge Graph results should be evaluated against the source documents.
+## Literature reviews
+
+The literature-review workflow retrieves evidence from selected papers and
+generates structured sections plus Markdown output.
+
+## Knowledge graph data
+
+The schema supports research entities and relationships such as authors,
+concepts, datasets, methods, models, and metrics. Entity and relationship
+queries are available through the AI service. Advanced graph exploration
+features are not part of the core RAG path.
 
 ---
 
-# 📊 RAG Evaluation
+# AI service API
 
-DocLens includes an evaluation framework for measuring retrieval, generation, and grounding quality.
-
-## Retrieval Metrics
+The FastAPI entrypoint is `ai-service/main.py`.
 
 ```text
-Recall@K
-MRR
+GET  /health
+
+POST /ingest
+POST /embed
+GET  /status/{document_id}
+
+POST /search
+POST /search/semantic
+POST /search/chunk
+POST /search/hybrid
+
+POST /ask
+POST /summarise
+POST /review
+POST /compare
+POST /literature-review
+
+POST /kg/entities
+POST /kg/relationships
+
+POST /evaluate
 ```
 
-## Generation Metrics
+The NestJS backend exposes the public `/api/v1` routes and uses the AI service
+as an internal dependency.
+
+---
+
+# Evaluation
+
+The evaluation implementation is in `ai-service/rag/evaluation.py`.
+
+## Retrieval metrics
+
+- Recall@K
+- Mean Reciprocal Rank (MRR)
+- Reranking improvement
+
+## Generation and grounding metrics
+
+- Faithfulness
+- Answer relevance
+- Unsupported-claim rate
+
+## Citation metrics
+
+- Citation correctness
+- Citation precision
+- Citation coverage
+
+## Operational metrics
+
+- Retrieval and generation latency
+- Processing latency
+
+Negative-evidence tests verify that questions with no supporting source
+material produce transparent insufficient-evidence responses instead of
+fabricated claims.
+
+---
+
+# Deployment
+
+Docker Compose runs:
 
 ```text
-Faithfulness
-Answer Relevance
+postgres
+redis
+backend-migrate
+backend
+ai-service
+frontend
 ```
 
-## Citation Metrics
+Startup order:
 
 ```text
-Citation Correctness
-Unsupported Claim Rate
-```
-
-## Negative Tests
-
-The system should also be tested with questions for which the uploaded documents contain insufficient evidence.
-
-Expected behavior:
-
-```text
-No Supporting Evidence
+PostgreSQL and Redis
         ↓
-No Unsupported Claim
+Prisma migrations
         ↓
-Transparent Insufficient-Evidence Response
+FastAPI AI service
+        ↓
+NestJS backend
+        ↓
+React/Nginx frontend
 ```
 
-Evaluation numbers should only be reported after running the actual evaluation suite.
+The AI container caches Hugging Face models in a persistent volume so BGE-M3
+and the reranker are not downloaded on every restart.
 
----
-
-# 🔐 Authentication
-
-Authentication is handled entirely by the NestJS backend.
+Required production configuration includes:
 
 ```text
-Client
-  │
-  ▼
-POST /api/v1/auth/login
-  │
-  ▼
-AuthService
-  │
-  ▼
-Credential Validation
-  │
-  ▼
-JWT Generation
-  │
-  ▼
-Client
+DATABASE_URL
+POSTGRES_PASSWORD
+JWT_SECRET
+INTERNAL_API_SECRET
+GEMINI_API_KEY
+CORS_ORIGINS
 ```
 
-Protected API requests use:
-
-```text
-Authorization: Bearer <JWT>
-```
-
-JWT configuration is validated during startup.
-
-Authentication tests cover:
-
-* Registration
-* Duplicate registration
-* Valid login
-* Invalid credentials
-* JWT validation
-* Expired tokens
-* Tampered tokens
-* Wrong-secret tokens
-* User isolation
-* Logout behavior
+See `.env.example` for the available configuration.
 
 ---
 
-# 🐳 Docker Architecture
+# Security and reliability boundaries
 
-DocLens runs as multiple Docker services:
-
-```text
-┌─────────────────────────────────────────────┐
-│                Docker Compose               │
-│                                             │
-│  ┌──────────┐     ┌──────────┐              │
-│  │ Frontend │────▶│ Backend  │              │
-│  │  :8080   │     │  :3001   │              │
-│  └──────────┘     └─────┬────┘              │
-│                         │                   │
-│                    ┌────▼────┐              │
-│                    │AI       │              │
-│                    │Service  │              │
-│                    │:8000    │              │
-│                    └─────────┘              │
-│                                             │
-│  ┌──────────┐                               │
-│  │ Redis    │                               │
-│  │ :6379    │                               │
-│  └──────────┘                               │
-└───────────────────────┬─────────────────────┘
-                        │
-                        ▼
-                ┌───────────────┐
-                │   Supabase    │
-                │ PostgreSQL    │
-                │ + pgvector    │
-                └───────────────┘
-```
+- The frontend never accesses PostgreSQL directly.
+- The backend owns authentication and collection/document authorization.
+- The AI service is an internal service behind the NestJS control plane.
+- Uploaded PDFs are stored in a persistent backend volume.
+- The AI service mounts uploaded files read-only.
+- DTO validation and access checks occur before AI requests.
+- Processing failures are represented in document/job status rather than
+  silently marking a document ready.
+- Retrieval provenance, page metadata, chunk IDs, and source text are preserved
+  for traceability.
 
 ---
 
-# 🚀 Installation
+# Local development
 
-## Prerequisites
+Install JavaScript dependencies:
 
-Recommended:
-
-* Docker
-* Docker Compose
-* Supabase PostgreSQL
-* pgvector
-* Gemini API key
-
-For manual development:
-
-* Node.js 18+
-* Python 3.11+
-* PostgreSQL 14+
-
----
-
-# ⚙️ Environment Configuration
-
-Create the local environment file:
-
-```bash
-cp .env.example .env
+```powershell
+npm install
 ```
 
-Configure:
+Generate the Prisma client:
 
-```env
-DATABASE_URL=your-supabase-database-url
-GEMINI_API_KEY=your-gemini-api-key
-JWT_SECRET=your-secure-jwt-secret
-INTERNAL_API_SECRET=your-internal-service-secret
-JWT_EXPIRES_IN=7d
-CORS_ORIGINS=http://localhost:8080
-LLM_MODEL=gemini-1.5-flash
+```powershell
+npm run prisma:generate
 ```
 
-Do not commit real credentials.
+Start infrastructure and services:
 
-Use `.env.example` as the public configuration template.
-
----
-
-# 🐳 Run with Docker
-
-Build and start the application:
-
-```bash
-docker compose up --build -d
+```powershell
+docker compose up --build
 ```
 
-Check service status:
+Useful validation commands:
 
-```bash
-docker compose ps
-```
-
-Watch all logs:
-
-```bash
-docker compose logs -f
-```
-
-Watch the backend:
-
-```bash
-docker compose logs -f backend
-```
-
-Watch the AI service:
-
-```bash
-docker compose logs -f ai-service
-```
-
-Stop the application:
-
-```bash
-docker compose down
-```
-
----
-
-# 🌐 Application URLs
-
-When running locally:
-
-| Service   | URL                              |
-| --------- | -------------------------------- |
-| Frontend  | `http://localhost:8080`          |
-| Backend   | `http://localhost:3001/api/v1`   |
-| Swagger   | `http://localhost:3001/api/docs` |
-| AI Health | `http://localhost:8000/health`   |
-| Redis     | `localhost:6379`                 |
-
----
-
-# ❤️ Health Checks
-
-Backend:
-
-```bash
-curl http://localhost:3001/api/v1
-```
-
-AI service:
-
-```bash
-curl http://localhost:8000/health
-```
-
-Docker:
-
-```bash
-docker compose ps
-```
-
-The migration container may show:
-
-```text
-Exited (0)
-```
-
-This is expected after successful database migrations.
-
----
-
-# 🔑 Authentication Test
-
-Login:
-
-```bash
-curl -i -X POST \
-  http://localhost:3001/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@doclens.ai","password":"YOUR_PASSWORD"}'
-```
-
-Test the protected `/me` endpoint:
-
-```bash
-curl -i \
-  http://localhost:3001/api/v1/auth/me \
-  -H "Authorization: Bearer YOUR_TOKEN"
-```
-
-Never commit or publicly share JWT tokens.
-
----
-
-# 📦 Docker Volumes
-
-The Docker deployment uses volumes for persistent application data and model caching.
-
-```text
-redis-data
-backend-uploads
-huggingface-cache
-```
-
-The HuggingFace cache prevents the large BGE models from being downloaded on every restart.
-
-The current PDF storage uses the Docker `backend-uploads` volume.
-
-For production deployments with replaceable or horizontally scaled servers, durable object storage should be considered for uploaded PDFs.
-
----
-
-# ☁️ Deployment Model
-
-Supabase hosts the PostgreSQL database independently from the application containers.
-
-Therefore:
-
-```text
-Application
- ├── Frontend
- ├── Backend
- ├── AI Service
- └── Redis
-
-Database
- └── Supabase PostgreSQL + pgvector
-```
-
-The application can be moved to another Docker-capable server without moving the PostgreSQL database.
-
-Production deployment requires supplying the environment secrets to the deployment platform/server.
-
----
-
-# 🧪 Testing
-
-## Backend Tests
-
-```bash
-cd backend
-npm test
-```
-
-Authentication tests cover the complete basic authentication flow.
-
-## Backend Build
-
-```bash
-cd backend
-npm run build
-```
-
-## Docker Validation
-
-```bash
+```powershell
+npm run build:all
+npm --prefix backend run test
+python -m compileall -q ai-service
+python -m pytest ai-service\rag\test_phase_pipeline.py -q
 docker compose config
-docker compose build
-docker compose up -d
-docker compose ps
 ```
 
-## End-to-End Test
+---
 
-The recommended end-to-end workflow is:
+# Current implementation boundary
+
+The implemented pipeline is:
 
 ```text
-Login
- ↓
-Create Workspace
- ↓
-Upload PDF
- ↓
-Document Processing
- ↓
-Embedding
- ↓
-Vector Storage
- ↓
-Ask Question
- ↓
-RRF Retrieval
- ↓
-BGE Reranking
- ↓
-Gemini
- ↓
-Claim Verification
- ↓
-Citation Validation
- ↓
-Grounded Answer
+Ingestion
+→ Embeddings
+→ Hybrid retrieval
+→ RRF
+→ Cross-encoder reranking
+→ Multi-query retrieval
+→ Evidence construction
+→ Gemini structured generation
+→ Citation validation
+→ Claim verification
+→ Evaluation
 ```
 
----
-
-# 🔬 Research Workflow
-
-A typical DocLens workflow is:
-
-```text
-Researcher
-    │
-    ▼
-Upload Papers
-    │
-    ▼
-Organize into Collection
-    │
-    ▼
-Semantic Search
-    │
-    ├──────────────┐
-    ▼              ▼
-Ask Questions   Compare Papers
-    │              │
-    ▼              ▼
-Cited Answers   Structured Comparison
-    │
-    ▼
-Literature Review
-    │
-    ▼
-Knowledge Graph
-```
-
-This allows researchers to move from individual papers to collection-level research intelligence.
-
----
-
-# 🎯 Design Principles
-
-## Grounded Over Generative
-
-AI features should prioritize evidence from source documents rather than unrestricted generation.
-
-## No Evidence = No Claim
-
-The RAG pipeline must preserve claim verification and citation validation.
-
-## Citation First
-
-Research answers should provide a path from:
-
-```text
-Answer
- ↓
-Claim
- ↓
-Citation
- ↓
-Retrieved Chunk
- ↓
-Original Paper
-```
-
-## Clear Service Boundaries
-
-NestJS owns:
-
-* Authentication
-* Authorization
-* Users
-* Application business logic
-* API orchestration
-
-FastAPI owns:
-
-* Document processing
-* Embeddings
-* Retrieval
-* Reranking
-* RAG
-* Structured AI processing
-* Knowledge Graph extraction
-* AI evaluation
-
-## Measured Improvements
-
-New AI features should be evaluated rather than described as improvements without supporting measurements.
-
----
-
-# 🔒 Security
-
-Before production deployment:
-
-* Rotate any credentials previously committed to Git
-* Use strong JWT secrets
-* Use a strong internal API secret
-* Use a strong admin password
-* Keep `.env` out of Git
-* Never log passwords
-* Never log API keys
-* Never log JWT tokens
-* Restrict CORS to trusted origins
-* Use HTTPS in production
-
-Recommended:
-
-```bash
-openssl rand -hex 32
-```
-
-for generating strong random secrets.
-
----
-
-# ⚠️ Current Limitations
-
-### Claim Verification
-
-Current claim verification is heuristic and based on text overlap. A semantic or LLM-based verification layer could improve precision but would introduce additional computation and API calls.
-
-### JWT Logout
-
-Current logout behavior relies on token removal on the client side. A Redis-backed token denylist could provide stronger server-side revocation.
-
-### Knowledge Graph Quality
-
-LLM-based entity and relationship extraction requires evaluation because structured extraction can occasionally produce incorrect or incomplete results.
-
-### PDF Storage
-
-Current uploaded PDFs are stored in a Docker volume. Production deployments should consider durable object storage.
-
-### AI Model Size
-
-BGE-M3 and the BGE reranker are relatively large models. Initial AI-service startup can therefore take longer and requires additional memory/storage.
-
----
-
-# 🚀 Future Improvements
-
-Potential future improvements include:
-
-* Semantic claim verification
-* Stronger citation validation
-* Redis-backed JWT revocation
-* Durable PDF object storage
-* Improved Knowledge Graph evidence linking
-* Automated RAG benchmarks
-* Larger evaluation datasets
-* Improved structured-output reliability
-* Production observability
-* AI-service horizontal scaling
-* GPU inference for larger deployments
-
----
-
-# 🤝 Contributing
-
-When extending DocLens:
-
-1. Preserve evidence grounding.
-2. Preserve citation traceability.
-3. Keep authentication inside NestJS.
-4. Keep AI workloads inside FastAPI.
-5. Preserve claim verification.
-6. Add tests for new functionality.
-7. Evaluate AI improvements with measurable metrics.
-8. Never commit credentials.
-
----
-
-# 📄 License
-
-© Aishwary Vansh 2026.
-
-This project is licensed under the MIT License.
+The architecture avoids adding separate orchestration frameworks, a second
+vector database, or heavyweight document-processing dependencies. The main
+quality boundary is the evidence metadata preserved from ingestion through the
+final answer.

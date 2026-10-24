@@ -21,6 +21,9 @@ def main():
                 if os.path.exists(abs_path):
                     res = ingest.ingest_document(doc_id, abs_path, coll_id)
                     print(f"Result: {res}")
+                    # Re-ingest replaces every chunk, so vectors must be rebuilt too.
+                    if res.get("status") == "completed":
+                        print(f"Embedded: {ingest.embed_document(doc_id)}")
                 else:
                     print(f"File not found: {abs_path}")
     finally:

@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { LocalStrategy } from './strategies/local.strategy';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { GoogleTokenVerifier } from './google-token.verifier';
 import { UsersModule } from '../users/users.module';
 
 // Sentinel defaults — if the runtime secret equals any of these, JWT signing is
@@ -51,7 +52,7 @@ const WEAK_SECRETS = new Set([
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, LocalStrategy, JwtStrategy],
+  providers: [AuthService, LocalStrategy, JwtStrategy, GoogleTokenVerifier],
   exports: [AuthService, JwtModule, UsersModule],
 })
 export class AuthModule {}

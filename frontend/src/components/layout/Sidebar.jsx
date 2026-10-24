@@ -3,7 +3,6 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useSocket } from "../../contexts/SocketContext";
 import useServiceHealth from "../../hooks/useServiceHealth";
 import Icon from "../research/Icons";
-import logoUrl from "@/assets/logo.png";
 
 const NAV_ITEMS = [
   { id: PAGES.DASHBOARD, label: "Dashboard", icon: "dashboard" },
@@ -16,13 +15,14 @@ const NAV_ITEMS = [
 ];
 
 const Sidebar = ({ onShowLanding }) => {
-  const { activePage, navigateTo, sidebarCollapsed } = useApp();
+  const { activePage, navigateTo, sidebarCollapsed, mobileNavOpen } = useApp();
   const { logout, user } = useAuth();
   const socket = useSocket();
   const { apiOk, pipelineOk } = useServiceHealth();
   const initials = user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "D";
   const activeNavPage = activePage === PAGES.COLLECTION ? PAGES.COLLECTIONS : activePage;
-  const collapsed = sidebarCollapsed;
+  // The off-canvas drawer (narrow screens) always shows labels.
+  const collapsed = sidebarCollapsed && !mobileNavOpen;
 
   // Dot colour helper: null=checking (dim pulse), true=green, false=red
   const dot = (status) => ({
@@ -52,23 +52,18 @@ const Sidebar = ({ onShowLanding }) => {
           flexShrink: 0,
         }}
       >
-        <img 
-          src={logoUrl} 
-          alt="DocLens Logo" 
-          style={{ 
-            width: collapsed ? 32 : 44, 
-            height: "auto", 
-            maxHeight: collapsed ? 32 : 44,
-            flexShrink: 0, 
-            objectFit: "contain",
-            borderRadius: 6,
-            display: "block",
-          }} 
-        />
+        <span className="brand-glyph" aria-hidden="true" style={{ width: collapsed ? 30 : 32, height: collapsed ? 30 : 32 }}>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5" />
+            <path d="M14 3l5 5v3" />
+            <circle cx="16.5" cy="16.5" r="3.5" />
+            <path d="M19 19l2 2" />
+          </svg>
+        </span>
         {!collapsed && (
           <div style={{ overflow: "hidden" }}>
             <strong style={{ fontSize: "0.9rem" }}>DocLens</strong>
-            <span style={{ fontSize: "0.68rem" }}>Research Intelligence</span>
+            <span style={{ fontSize: "0.68rem" }}>Research assistant</span>
           </div>
         )}
       </button>
@@ -103,7 +98,7 @@ const Sidebar = ({ onShowLanding }) => {
       {/* Status panel — hidden when collapsed */}
       {!collapsed && (
         <section className="sidebar-signal-panel" aria-label="Research platform status" style={{ padding: "10px 12px", gap: 8 }}>
-          <strong style={{ fontSize: "0.76rem" }}>Corpus Intelligence</strong>
+          <strong style={{ fontSize: "0.76rem" }}>Services</strong>
           <div className="signal-row">
             <span>API</span>
             <i style={dot(apiOk)} />

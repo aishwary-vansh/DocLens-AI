@@ -11,6 +11,39 @@ import {
 import Icon from "../components/research/Icons";
 import { formatDate } from "../utils/researchData";
 import { useToast } from "../contexts/ToastContext";
+import CitedReport from "../components/research/CitedReport";
+
+const COMPARISON_SECTIONS = [
+  ["methods", "Methods"],
+  ["datasets", "Datasets"],
+  ["findings", "Key findings"],
+  ["strengths", "Strengths"],
+  ["weaknesses", "Weaknesses"],
+  ["agreements", "Where the papers agree"],
+  ["disagreements", "Where the papers disagree"],
+  ["futureWork", "Future work"],
+];
+
+const cell = (value) => String(value || "—").replace(/\|/g, "/").replace(/\n/g, " ");
+
+/** Markdown for the comparison reader: narrative, per-aspect lists and the
+ *  paper matrix, all from the stored structured result (not just the narrative). */
+function comparisonMarkdown(comparison) {
+  const r = comparison.result || comparison;
+  const parts = [r.narrative || comparison.markdown || "No narrative generated."];
+  for (const [key, heading] of COMPARISON_SECTIONS) {
+    const items = (r[key] || []).filter(Boolean);
+    if (items.length) parts.push(`## ${heading}`, items.map((item) => `- ${item}`).join("\n"));
+  }
+  if (r.paperMatrix?.length) {
+    parts.push(
+      "## Paper matrix",
+      ["| Paper | Method | Datasets | Key result | Limitation |", "| --- | --- | --- | --- | --- |",
+        ...r.paperMatrix.map((row) => `| ${cell(row.title)} | ${cell(row.method)} | ${cell(row.datasets)} | ${cell(row.key_result)} | ${cell(row.limitation)} |`)].join("\n"),
+    );
+  }
+  return parts.join("\n\n");
+}
 
 const ComparePapersPage = () => {
   const { collections, papers } = useResearchCorpus();
@@ -98,9 +131,9 @@ const ComparePapersPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Analysis"
-        title="Compare Papers"
-        description="Select multiple papers to synthesize differences in methodology, findings, datasets, and limitations side-by-side."
+        eyebrow="Synthesis"
+        title="Compare papers"
+        description="Methods, datasets, findings and limitations side by side, each backed by a cited passage."
         actions={
           <ActionButton
             icon="plus"
@@ -127,8 +160,12 @@ const ComparePapersPage = () => {
               </ActionButton>
             }
           >
-            <div style={{ padding: "20px 30px", fontSize: "0.9rem", lineHeight: 1.7, color: "var(--rp-text)", whiteSpace: "pre-wrap" }}>
-              {activeComparison.markdown || activeComparison.result?.markdown || `# ${activeComparison.title}\n\n${activeComparison.narrative || activeComparison.result?.narrative || "No narrative generated."}`}
+            <div className="report-reader">
+              <CitedReport
+                markdown={comparisonMarkdown(activeComparison)}
+                citations={(activeComparison.result || activeComparison).citations || []}
+                verification={(activeComparison.result || activeComparison).verification}
+              />
             </div>
           </Panel>
           <div className="report-detail-side">

@@ -11,43 +11,108 @@ import {
 import Icon from "../components/research/Icons";
 import { sampleQueries } from "../utils/researchData";
 import { PromptInput } from "../components/ui/PromptInput";
+import MarkdownAnswer from "../components/research/MarkdownAnswer";
 
-// ── Citation chip ──────────────────────────────────────────────────────
-function CitationChip({ citation, index, onClick }) {
+// ── Source card (numbered like the [n] markers in the answer) ─────────
+function SourceCard({ citation, index, active, onClick }) {
   return (
     <button
-      className="citation-chip"
+      className={`source-card ${active ? "is-active" : ""}`}
       onClick={() => onClick(citation)}
       type="button"
-      title={citation.documentTitle}
+      title={`Open source ${index + 1}`}
     >
-      <span className="citation-chip-num">{index + 1}</span>
-      {citation.documentTitle?.length > 28
-        ? citation.documentTitle.slice(0, 28) + "…"
-        : citation.documentTitle}
-      {citation.score && (
-        <span style={{ opacity: 0.6 }}>· {Math.round(citation.score * 100)}%</span>
-      )}
+      <span className="source-card-num">{index + 1}</span>
+      <span className="source-card-body">
+        <strong>{citation.documentTitle || "Untitled paper"}</strong>
+        <small>
+          {citation.pageNumber ? `Page ${citation.pageNumber}` : "Page n/a"}
+          {citation.score ? ` · ${Math.round(citation.score * 100)}% match` : ""}
+        </small>
+      </span>
     </button>
   );
 }
 
+/** Id that lets the backend recognise a retry of the same question. */
+function newRequestId() {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+const DEGRADED_REASON = {
+  timeout: "The AI answer took too long",
+  unavailable: "The AI model is unavailable (quota or API key)",
+};
+
+/** One shape for live answers and answers reloaded from a saved session. */
+function toAssistantMessage(raw) {
+  return {
+    role: "assistant",
+    content: raw.content,
+    citations: raw.citations || [],
+    insufficientEvidence: Boolean(raw.insufficient_evidence ?? raw.insufficientEvidence),
+    evidenceConflict: Boolean(raw.evidence_conflict ?? raw.evidenceConflict),
+    background: raw.background || null,
+    degraded: raw.model_used === "extractive-citation-fallback" || Boolean(raw.degraded),
+    aiFailure: raw.ai_failure || raw.aiFailure || null,
+    unverifiedClaims: raw.unverifiedClaims ?? (raw.claims || []).filter(claim => claim.verified === false).length,
+  };
+}
+
+function answerFlags(message) {
+  const flags = [];
+  if (message.degraded) {
+    flags.push({ tone: "warn", text: `${DEGRADED_REASON[message.aiFailure] || "AI answer unavailable"}: showing the most relevant passages, not a written answer.` });
+  } else if (message.insufficientEvidence) {
+    flags.push({ tone: "warn", text: "Not enough evidence in your papers to answer this." });
+  }
+  if (message.evidenceConflict) flags.push({ tone: "conflict", text: "Sources disagree. Both sides are cited below." });
+  if (message.unverifiedClaims > 0) {
+    flags.push({ tone: "muted", text: `${message.unverifiedClaims} claim(s) could not be matched to their cited passage.` });
+  }
+  return flags;
+}
+
 // ── Single message bubble ──────────────────────────────────────────────
-function Message({ message, onCitationClick, onCopy }) {
+function Message({ message, onCitationClick, onCopy, activeCitation }) {
+  const flags = message.role === "assistant" ? answerFlags(message) : [];
   return (
     <div className={`message ${message.role}`}>
       <span>{message.role === "user" ? "You" : "DocLens AI"}</span>
-      <p>{message.content}</p>
-      {!!message.citations?.length && (
-        <div className="citation-strip">
-          {message.citations.map((c, i) => (
-            <CitationChip
-              key={`${c.documentTitle}-${i}`}
-              citation={c}
-              index={i}
-              onClick={onCitationClick}
-            />
+      {!!flags.length && (
+        <div className="answer-flags" role="note">
+          {flags.map(flag => (
+            <span key={flag.text} className={`answer-flag is-${flag.tone}`}>{flag.text}</span>
           ))}
+        </div>
+      )}
+      {message.role === "assistant" ? (
+        <div className="message-body">
+          <MarkdownAnswer text={message.content} citations={message.citations} onCite={onCitationClick} />
+        </div>
+      ) : (
+        <p>{message.content}</p>
+      )}
+      {message.role === "assistant" && message.background && (
+        <aside className="answer-background" aria-label="Background knowledge">
+          <div className="answer-background-label">Background · general knowledge, not from your papers</div>
+          <p>{message.background}</p>
+        </aside>
+      )}
+      {!!message.citations?.length && (
+        <div className="source-list" aria-label="Sources">
+          <div className="source-list-label">Sources</div>
+          <div className="source-list-grid">
+            {message.citations.map((c, i) => (
+              <SourceCard
+                key={`${c.documentTitle}-${i}`}
+                citation={c}
+                index={i}
+                active={activeCitation === c}
+                onClick={onCitationClick}
+              />
+            ))}
+          </div>
         </div>
       )}
       {message.role === "assistant" && (
@@ -72,8 +137,8 @@ function HistoryItem({ item, isActive, onClick, type = "session" }) {
         textAlign: "left",
         padding: "10px 12px",
         borderRadius: 8,
-        border: `1px solid ${isActive ? "rgba(6,182,212,0.35)" : "rgba(255,255,255,0.05)"}`,
-        background: isActive ? "rgba(6,182,212,0.07)" : "rgba(255,255,255,0.02)",
+        border: `1px solid ${isActive ? "var(--ds-accent-line)" : "var(--rp-border)"}`,
+        background: isActive ? "var(--ds-accent-soft)" : "var(--ds-hover-faint)",
         cursor: "pointer",
         transition: "all 0.18s",
         display: "flex",
@@ -82,20 +147,20 @@ function HistoryItem({ item, isActive, onClick, type = "session" }) {
       }}
       onMouseEnter={e => {
         if (!isActive) {
-          e.currentTarget.style.background = "rgba(255,255,255,0.04)";
-          e.currentTarget.style.borderColor = "rgba(255,255,255,0.1)";
+          e.currentTarget.style.background = "var(--ds-hover)";
+          e.currentTarget.style.borderColor = "var(--rp-border-strong)";
         }
       }}
       onMouseLeave={e => {
         if (!isActive) {
-          e.currentTarget.style.background = "rgba(255,255,255,0.02)";
-          e.currentTarget.style.borderColor = "rgba(255,255,255,0.05)";
+          e.currentTarget.style.background = "var(--ds-hover-faint)";
+          e.currentTarget.style.borderColor = "var(--rp-border)";
         }
       }}
     >
       <span style={{
         fontSize: "0.78rem",
-        color: isActive ? "var(--rp-cyan)" : "var(--rp-text)",
+        color: isActive ? "var(--ds-accent)" : "var(--rp-text)",
         fontWeight: 500,
         overflow: "hidden",
         textOverflow: "ellipsis",
@@ -113,6 +178,18 @@ function HistoryItem({ item, isActive, onClick, type = "session" }) {
 }
 
 // ── Main ChatPage ──────────────────────────────────────────────────────
+// Progress events from POST /query/ask/stream.
+const STAGE_LABELS = {
+  queued: "Sending your question…",
+  loading_models: "Loading retrieval models…",
+  rewriting: "Interpreting your follow-up question…",
+  retrieving: "Searching and reranking passages in your papers…",
+  generating: "Writing a cited answer with Gemini…",
+  verifying: "Checking every claim against its cited passage…",
+  background: "No relevant passage found. Checking if this is a general question…",
+  fallback: "AI answer unavailable, collecting the most relevant passages…",
+};
+
 const ChatPage = () => {
   const { activeCollectionId, navigateTo } = useApp();
   const { collections, papers, error } = useResearchCorpus();
@@ -134,8 +211,14 @@ const ChatPage = () => {
     JSON.parse(localStorage.getItem("doclens_query_history") || "[]")
   );
   const [sending, setSending] = useState(false);
+  const [stage, setStage] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  // Only the latest request may update the chat; older ones are aborted/ignored.
+  const requestSeqRef = useRef(0);
+  const abortRef = useRef(null);
   const [copied, setCopied] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(true);
+  // Open by default on wide screens; on phones the panel is an overlay, so start closed.
+  const [historyOpen, setHistoryOpen] = useState(() => !window.matchMedia?.("(max-width: 900px)").matches);
   const [activeHistoryTab, setActiveHistoryTab] = useState("sessions"); // "sessions" | "queries"
   const [citationPanel, setCitationPanel] = useState(null); // for inline citation view
   const [activeCitation, setActiveCitation] = useState(null);
@@ -171,6 +254,18 @@ const ChatPage = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, sending]);
 
+  // Elapsed-seconds counter so a long answer never looks frozen.
+  useEffect(() => {
+    if (!sending) return undefined;
+    setElapsed(0);
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [sending]);
+
+  // Abort an in-flight answer when the page unmounts or the collection changes.
+  useEffect(() => () => cancelInFlight(), [selectedCollectionId]);
+
   const readyPapers = collectionPapers.filter(p => ["READY", "COMPLETED"].includes(p.status));
   const inspectorOpen = historyOpen || Boolean(citationPanel);
   const latestAssistant = messages.slice().reverse().find(m => m.role === "assistant");
@@ -185,9 +280,21 @@ const ChatPage = () => {
     );
   };
 
+  const cancelInFlight = () => {
+    requestSeqRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setSending(false);
+    setStage("");
+  };
+
   const sendMessage = async (question = input) => {
     const trimmed = question.trim();
     if (!trimmed || sending) return;
+    const seq = ++requestSeqRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const isCurrent = () => requestSeqRef.current === seq;
     localStorage.setItem("doclens_last_query", "");
     setInput("");
     persistHistory(trimmed);
@@ -196,30 +303,50 @@ const ChatPage = () => {
     setChatError("");
     setMessages(prev => [...prev, { role: "user", content: trimmed, citations: [] }]);
     setSending(true);
+    setStage("queued");
 
     try {
       if (!selectedCollectionId)
         throw new Error("Create a collection and upload papers before asking grounded questions.");
-      const response = await queryApi.ask({
+      const payload = {
         question: trimmed,
         collectionId: selectedCollectionId,
         sessionId: sessionId || undefined,
         topK: 6,
         documentIds: selectedPaperId ? [selectedPaperId] : undefined,
-      });
-      if (!response.citations?.length) {
+        // Lets the backend recognise a retry of this exact request.
+        clientRequestId: newRequestId(),
+      };
+      let response;
+      try {
+        response = await queryApi.askStream(payload, next => isCurrent() && setStage(next), controller.signal);
+      } catch (err) {
+        // Older backend without the stream route: same request, same id, no streaming.
+        if (err?.statusCode !== 404) throw err;
+        response = await queryApi.ask(payload);
+      }
+      if (!isCurrent()) return; // superseded or cancelled: never show a stale answer
+      setSessionId(response.session_id || response.sessionId || sessionId);
+      // An uncited reply is only shown when the backend marked it as
+      // "not enough evidence"; it is labelled as such, never as a sourced answer.
+      if (!response.citations?.length && !response.insufficient_evidence) {
         throw new Error("DocLens could not produce a citation-backed answer for this question.");
       }
-      setSessionId(response.session_id || response.sessionId || sessionId);
-      setMessages(prev => [
-        ...prev,
-        { role: "assistant", content: response.content, citations: response.citations || [] },
-      ]);
+      setMessages(prev => [...prev, toAssistantMessage(response)]);
     } catch (err) {
-      setChatError(err?.message || "The research query could not be completed.");
+      if (!isCurrent()) return;
+      setChatError(
+        err?.statusCode === 499
+          ? "Cancelled. Nothing was saved."
+          : err?.message || "The research query could not be completed."
+      );
     } finally {
-      setSending(false);
-      inputRef.current?.focus();
+      if (isCurrent()) {
+        abortRef.current = null;
+        setSending(false);
+        setStage("");
+        inputRef.current?.focus();
+      }
     }
   };
 
@@ -231,6 +358,7 @@ const ChatPage = () => {
   };
 
   const clearSession = () => {
+    cancelInFlight();
     setMessages([{ role: "assistant", content: "Session cleared. Ask a new research question.", citations: [] }]);
     setActiveCitation(null);
     setCitationPanel(null);
@@ -239,11 +367,12 @@ const ChatPage = () => {
   };
 
   const loadSession = async id => {
+    cancelInFlight();
     setChatError("");
     try {
       const session = await queryApi.session(id);
       setSessionId(id);
-      setMessages(session.messages || []);
+      setMessages((session.messages || []).map(m => (m.role === "assistant" ? toAssistantMessage(m) : m)));
       setActiveCitation(null);
       setCitationPanel(null);
     } catch (err) {
@@ -268,14 +397,14 @@ const ChatPage = () => {
     }}>
 
       {/* ── LEFT: History Sidebar ───────────────────────────── */}
-      <aside className="chat-inspector-panel" style={{
+      <aside className={`chat-inspector-panel ${inspectorOpen ? "is-open" : ""}`} style={{
         width: inspectorOpen ? 320 : 0,
         minWidth: inspectorOpen ? 320 : 0,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
         borderLeft: "1px solid var(--rp-border)",
-        background: "rgba(10,12,18,0.98)",
+        background: "var(--chat-inspector-bg, rgba(10,12,18,0.98))",
         overflow: "hidden",
         transition: "width 0.25s ease, min-width 0.25s ease",
         order: 2,
@@ -289,14 +418,14 @@ const ChatPage = () => {
           justifyContent: "space-between",
           flexShrink: 0,
         }}>
-          <span style={{ fontSize: "0.72rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--rp-text-muted)" }}>
+          <span style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--rp-text-muted)" }}>
             History
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               type="button"
               onClick={clearSession}
-              style={{ fontSize: "0.65rem", color: "var(--rp-text-muted)", background: "none", border: "none", cursor: "pointer", fontFamily: "var(--rp-mono)" }}
+              style={{ fontSize: "0.74rem", color: "var(--rp-text-muted)", background: "none", border: "none", cursor: "pointer" }}
             >
               Clear
             </button>
@@ -327,13 +456,11 @@ const ChatPage = () => {
                 flex: 1,
                 padding: "9px 4px",
                 border: "none",
-                borderBottom: `2px solid ${activeHistoryTab === tab ? "var(--rp-cyan)" : "transparent"}`,
+                borderBottom: `2px solid ${activeHistoryTab === tab ? "var(--ds-accent)" : "transparent"}`,
                 background: "none",
-                color: activeHistoryTab === tab ? "var(--rp-cyan)" : "var(--rp-text-muted)",
-                fontSize: "0.65rem",
-                fontFamily: "var(--rp-mono)",
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
+                color: activeHistoryTab === tab ? "var(--ds-accent)" : "var(--rp-text-muted)",
+                fontSize: "0.78rem",
+                fontWeight: 600,
                 cursor: "pointer",
                 transition: "color 0.15s",
               }}
@@ -383,7 +510,7 @@ const ChatPage = () => {
             maxHeight: 220,
             overflowY: "auto",
           }}>
-            <div style={{ fontSize: "0.6rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--rp-cyan)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: "0.6rem", fontWeight: 600, color: "var(--ds-accent)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span>Source Citation</span>
               <button type="button" onClick={() => setCitationPanel(null)} style={{ background: "none", border: "none", color: "var(--rp-text-muted)", cursor: "pointer", fontSize: "0.8rem" }}>✕</button>
             </div>
@@ -401,7 +528,7 @@ const ChatPage = () => {
               <button
                 type="button"
                 onClick={() => documentsApi.download(citationPanel.documentId, `${citationPanel.documentTitle || "paper"}.pdf`)}
-                style={{ marginTop: 8, padding: "5px 10px", border: "1px solid var(--rp-border)", borderRadius: 5, background: "rgba(6,182,212,0.08)", color: "var(--rp-cyan)", cursor: "pointer", fontSize: "0.7rem", width: "100%" }}
+                style={{ marginTop: 8, padding: "5px 10px", border: "1px solid var(--rp-border)", borderRadius: 5, background: "var(--ds-accent-soft)", color: "var(--ds-accent)", cursor: "pointer", fontSize: "0.7rem", width: "100%" }}
               >
                 Download PDF
               </button>
@@ -438,8 +565,8 @@ const ChatPage = () => {
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 32, height: 32, borderRadius: 7,
               border: "1px solid var(--rp-border)",
-              background: historyOpen ? "rgba(6,182,212,0.08)" : "transparent",
-              color: historyOpen ? "var(--rp-cyan)" : "var(--rp-text-muted)",
+              background: historyOpen ? "var(--ds-accent-soft)" : "transparent",
+              color: historyOpen ? "var(--ds-accent)" : "var(--rp-text-muted)",
               cursor: "pointer",
               transition: "all 0.18s",
             }}
@@ -473,7 +600,7 @@ const ChatPage = () => {
           {/* Suggested questions when session is fresh */}
           {messages.length === 1 && collections.length > 0 && (
             <div style={{ maxWidth: 560, margin: "0 auto 24px", width: "100%" }}>
-              <p style={{ fontSize: "0.7rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--rp-text-muted)", marginBottom: 12 }}>
+              <p style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--rp-text-muted)", marginBottom: 12 }}>
                 Suggested questions
               </p>
               <div className="chat-suggestion-grid">
@@ -491,14 +618,14 @@ const ChatPage = () => {
                     onClick={() => sendMessage(q)}
                     style={{
                       textAlign: "left", padding: "10px 14px",
-                      background: "rgba(255,255,255,0.025)",
-                      border: "1px solid rgba(255,255,255,0.07)",
+                      background: "var(--ds-hover-faint)",
+                      border: "1px solid var(--rp-border)",
                       borderRadius: 8, color: "var(--rp-text-soft)",
                       fontSize: "0.78rem", cursor: "pointer",
                       transition: "all 0.18s", lineHeight: 1.4,
                     }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(6,182,212,0.07)"; e.currentTarget.style.borderColor = "rgba(6,182,212,0.25)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.025)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"; }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "var(--ds-accent-soft)"; e.currentTarget.style.borderColor = "var(--ds-accent-line)"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "var(--ds-hover-faint)"; e.currentTarget.style.borderColor = "var(--rp-border)"; }}
                   >
                     {q}
                   </button>
@@ -508,7 +635,7 @@ const ChatPage = () => {
           )}
 
           {messages.map((m, i) => (
-            <Message key={i} message={m} onCitationClick={handleCitationClick} onCopy={handleCopy} />
+            <Message key={i} message={m} onCitationClick={handleCitationClick} onCopy={handleCopy} activeCitation={activeCitation} />
           ))}
 
           {sending && (
@@ -518,18 +645,38 @@ const ChatPage = () => {
                 <span style={{
                   display: "inline-block", width: 14, height: 14,
                   border: "2px solid var(--rp-border)",
-                  borderTopColor: "var(--rp-cyan)",
+                  borderTopColor: "var(--ds-accent)",
                   borderRadius: "50%",
                   animation: "rp-spin 0.7s linear infinite",
                   flexShrink: 0,
                 }} />
-                Reading source chunks and preparing a citation-aware response…
+                <span>
+                  {STAGE_LABELS[stage] || "Working on your question…"}
+                  <span style={{ color: "var(--rp-text-muted)", marginLeft: 8, fontVariantNumeric: "tabular-nums", fontSize: "0.72rem" }}>
+                    {elapsed}s
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { cancelInFlight(); setChatError("Cancelled. Nothing was saved."); }}
+                  style={{
+                    marginLeft: "auto", background: "transparent", border: "1px solid var(--rp-border)",
+                    color: "var(--rp-text)", borderRadius: 6, padding: "2px 10px", cursor: "pointer", fontSize: "0.75rem",
+                  }}
+                >
+                  Cancel
+                </button>
               </p>
+              {elapsed >= 45 && (
+                <p style={{ color: "var(--rp-text-muted)", fontSize: "0.75rem", marginTop: 4 }}>
+                  Reranking and generation run on CPU here; long answers can take a minute or two.
+                </p>
+              )}
             </div>
           )}
 
           {copied && (
-            <div style={{ textAlign: "center", padding: "4px 0", color: "var(--rp-green)", fontFamily: "var(--rp-mono)", fontSize: "0.68rem" }}>
+            <div style={{ textAlign: "center", padding: "4px 0", color: "var(--rp-green)", fontSize: "0.74rem" }}>
               Copied to clipboard ✓
             </div>
           )}
@@ -546,7 +693,7 @@ const ChatPage = () => {
           <div style={{ maxWidth: 860, width: "100%", margin: "0 auto" }}>
           {/* Collection + Paper picker row */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.6rem", fontFamily: "var(--rp-mono)", letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--rp-text-muted)", flexShrink: 0 }}>
+            <span style={{ fontSize: "0.6rem", fontWeight: 600, color: "var(--rp-text-muted)", flexShrink: 0 }}>
               Scope:
             </span>
             <select
@@ -592,9 +739,8 @@ const ChatPage = () => {
             }}
             onSubmit={() => sendMessage()}
             isLoading={sending}
-            placeholder="Ask about methods, datasets, findings, or citations… (Enter to send, Shift+Enter for newline)"
-            credits={undefined}
-            onUpgrade={() => {}}
+            placeholder="Ask about methods, datasets, findings, or citations…"
+            hint="Enter to send · Shift+Enter for a new line · answers cite your papers"
           />
         </div>
       </div>

@@ -20,7 +20,7 @@ import re
 from typing import List, Dict, Optional, Tuple, Any
 
 from .schemas import StructuredAnswer, CitationRef, Claim
-from .verification import _token_overlap, unsupported_claim_rate
+from .verification import _token_overlap, containment, unsupported_claim_rate
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,8 @@ def faithfulness_score(answer: str, chunks: List[Dict[str, Any]]) -> float:
 
     for sentence in sentences:
         for chunk_content in chunk_contents:
-            overlap = _token_overlap(sentence, chunk_content)
-            if overlap >= 0.12:  # threshold: at least 12% token overlap
+            overlap = containment(sentence, chunk_content)
+            if overlap >= 0.5:  # at least half the sentence's content words are in the chunk
                 grounded_count += 1
                 break
 
@@ -110,7 +110,9 @@ def answer_relevance(question: str, answer: str) -> float:
         from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
 
-        model_name = os.getenv("LLM_MODEL", "gemini-1.5-flash").replace("google/", "").replace(":free", "")
+        from .llm import model_name as configured_model
+
+        model_name = configured_model()
         llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, temperature=0.0)
 
         prompt = (
@@ -153,8 +155,8 @@ def citation_correctness(citations: List[CitationRef], retrieved_chunks: List[Di
         if not cit.source_text:
             correct += 1  # No source_text to verify — give benefit of doubt
             continue
-        overlap = _token_overlap(cit.source_text, chunk_content)
-        if overlap >= 0.05:
+        overlap = containment(cit.source_text, chunk_content)
+        if overlap >= 0.6:
             correct += 1
         else:
             logger.warning(

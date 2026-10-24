@@ -1,27 +1,30 @@
 /**
  * useServiceHealth
- * Polls the NestJS backend root endpoint and the FastAPI /health endpoint
+ * Polls the backend GET /health (API + AI service status)
  * every 30 seconds to provide real live status for the sidebar signal panel.
  */
 import { useState, useEffect, useRef } from "react";
 
 const BACKEND_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001/api/v1";
 
-const AI_URL = import.meta.env.VITE_AI_URL ?? "http://localhost:8000";
-
 const POLL_INTERVAL = 30_000; // 30 seconds
-const TIMEOUT_MS    = 5_000;  // 5 second timeout per request
+const TIMEOUT_MS    = 8_000;  // backend waits up to 5 s for the AI service
 
-async function fetchWithTimeout(url, timeoutMs = TIMEOUT_MS) {
+/** GET /health on the backend: { api: { ok }, ai: { ok, modelsLoaded } }.
+ *  The AI service is internal-only, so the browser asks the backend about it. */
+async function fetchHealth() {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
+  const id = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(id);
-    return res.ok;
+    const res = await fetch(`${BACKEND_URL}/health`, { signal: controller.signal });
+    if (!res.ok) return { api: false, pipeline: false };
+    const json = await res.json();
+    const body = json?.data ?? json;
+    return { api: true, pipeline: Boolean(body?.ai?.ok) };
   } catch {
+    return { api: false, pipeline: false };
+  } finally {
     clearTimeout(id);
-    return false;
   }
 }
 
@@ -31,10 +34,7 @@ export default function useServiceHealth() {
   const timer = useRef(null);
 
   const check = async () => {
-    const [api, pipeline] = await Promise.all([
-      fetchWithTimeout(`${BACKEND_URL}/`),
-      fetchWithTimeout(`${AI_URL}/health`),
-    ]);
+    const { api, pipeline } = await fetchHealth();
     setApiOk(api);
     setPipelineOk(pipeline);
   };

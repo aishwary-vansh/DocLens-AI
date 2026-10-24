@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 from pgvector.psycopg2 import register_vector
 from psycopg2.extras import Json
 
+from vector_store.text_query import keyword_or_query, scope_filter
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,74 @@ class PgStore:
                 cur.execute('SELECT "collectionId" FROM "Document" WHERE id = %s', (document_id,))
                 row = cur.fetchone()
                 return row[0] if row else None
+        finally:
+            conn.close()
+
+    def get_documents(
+        self,
+        document_ids: Optional[list[str]] = None,
+        collection_id: Optional[str] = None,
+        limit: int = 30,
+    ) -> list[dict]:
+        """Load documents (id, title, metadata) by ids, or every indexed paper in a collection."""
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                if document_ids:
+                    cur.execute(
+                        'SELECT id, title, metadata, "collectionId" FROM "Document" WHERE id = ANY(%s)',
+                        (document_ids,),
+                    )
+                    rows = {row[0]: row for row in cur.fetchall()}
+                    ordered = [rows[i] for i in document_ids if i in rows]
+                elif collection_id:
+                    cur.execute(
+                        """
+                        SELECT d.id, d.title, d.metadata, d."collectionId" FROM "Document" d
+                        WHERE d."collectionId" = %s
+                          AND EXISTS (SELECT 1 FROM "DocumentChunk" c WHERE c."documentId" = d.id)
+                        ORDER BY d."createdAt" DESC
+                        LIMIT %s
+                        """,
+                        (collection_id, limit),
+                    )
+                    ordered = cur.fetchall()
+                else:
+                    return []
+                return [
+                    {"id": r[0], "title": r[1], "metadata": _json_dict(r[2]), "collectionId": r[3]}
+                    for r in ordered
+                ]
+        finally:
+            conn.close()
+
+    def get_chunks_by_ids(self, chunk_ids: list[str]) -> list[dict]:
+        if not chunk_ids:
+            return []
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT c.id, c."documentId", d.title, c."chunkIndex", c.content, c."pageNumber", c.metadata
+                    FROM "DocumentChunk" c JOIN "Document" d ON d.id = c."documentId"
+                    WHERE c.id = ANY(%s)
+                    """,
+                    (list(chunk_ids),),
+                )
+                rows = {
+                    row[0]: {
+                        "id": row[0],
+                        "documentId": row[1],
+                        "documentTitle": row[2],
+                        "chunkIndex": row[3],
+                        "content": row[4],
+                        "pageNumber": row[5],
+                        "metadata": _json_dict(row[6]),
+                    }
+                    for row in cur.fetchall()
+                }
+                return [rows[i] for i in chunk_ids if i in rows]
         finally:
             conn.close()
 
@@ -230,17 +300,77 @@ class PgStore:
         finally:
             conn.close()
 
-    def insert_ingestion_chunks(self, chunks: list[dict], document_id: str) -> None:
-        """Persist Phase 1 evidence chunks before the embedding phase."""
+    def get_chunk_fingerprints(self, document_id: str) -> list[dict]:
+        """Stored chunk ids, content hashes and the model that produced their vectors."""
         conn = self.get_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    'DELETE FROM "DocumentChunk" WHERE "documentId" = %s',
+                    """
+                    SELECT c.id, c."contentHash",
+                           CASE WHEN c.embedding IS NULL THEN NULL ELSE em."modelName" END
+                    FROM "DocumentChunk" c
+                    LEFT JOIN "EmbeddingMetadata" em ON em."chunkId" = c.id
+                    WHERE c."documentId" = %s
+                    """,
                     (document_id,),
                 )
+                return [{"id": r[0], "contentHash": r[1], "embeddingModel": r[2]} for r in cur.fetchall()]
+        finally:
+            conn.close()
+
+    def insert_ingestion_chunks(self, chunks: list[dict], document_id: str) -> dict:
+        """Persist Phase 1 evidence chunks before the embedding phase.
+
+        Re-ingest is an upsert, not delete-all: chunks marked `reuseExisting`
+        (see rag.chunking.reconcile_chunk_ids) keep their row id, so Citation
+        rows survive; their vector is kept only when `keepEmbedding` is set.
+        Rows no longer produced by the parser are deleted (their citations
+        cascade, because that text no longer exists).
+        """
+        conn = self.get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SELECT id FROM "DocumentChunk" WHERE "documentId" = %s', (document_id,))
+                existing = {row[0] for row in cur.fetchall()}
+                reused = [c["id"] for c in chunks if c.get("reuseExisting") and c.get("id") in existing]
+                stale = list(existing - set(reused))
+                if stale:
+                    cur.execute('DELETE FROM "DocumentChunk" WHERE id = ANY(%s)', (stale,))
+                if reused:
+                    # Move kept rows to negative indexes first so the new order cannot
+                    # collide with the ("documentId", "chunkIndex") unique key.
+                    cur.execute(
+                        'UPDATE "DocumentChunk" SET "chunkIndex" = -1 - "chunkIndex" WHERE id = ANY(%s)',
+                        (reused,),
+                    )
+                reused_set = set(reused)
                 for chunk in chunks:
                     content = chunk["content"].strip()
+                    content_hash = chunk.get("contentHash") or hashlib.sha256(content.encode("utf-8")).hexdigest()
+                    if chunk.get("id") in reused_set:
+                        cur.execute(
+                            """
+                            UPDATE "DocumentChunk"
+                            SET "chunkIndex" = %s, content = %s, "pageNumber" = %s, metadata = %s,
+                                "tokenCount" = %s, "contentHash" = %s
+                            WHERE id = %s AND "documentId" = %s
+                            """,
+                            (
+                                int(chunk["chunkIndex"]),
+                                content,
+                                chunk.get("pageNumber"),
+                                Json(chunk.get("metadata", {})),
+                                max(1, len(content.split())),
+                                content_hash,
+                                chunk["id"],
+                                document_id,
+                            ),
+                        )
+                        if not chunk.get("keepEmbedding"):
+                            cur.execute('UPDATE "DocumentChunk" SET embedding = NULL WHERE id = %s', (chunk["id"],))
+                            cur.execute('DELETE FROM "EmbeddingMetadata" WHERE "chunkId" = %s', (chunk["id"],))
+                        continue
                     cur.execute(
                         """
                         INSERT INTO "DocumentChunk" (
@@ -252,18 +382,18 @@ class PgStore:
                         )
                         """,
                         (
-                            str(uuid.uuid4()),
+                            chunk.get("id") or str(uuid.uuid4()),
                             document_id,
                             int(chunk["chunkIndex"]),
                             content,
                             chunk.get("pageNumber"),
                             Json(chunk.get("metadata", {})),
                             max(1, len(content.split())),
-                            chunk.get("contentHash")
-                            or hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                            content_hash,
                         ),
                     )
             conn.commit()
+            return {"kept": len(reused), "deleted": len(stale), "inserted": len(chunks) - len(reused)}
         except Exception:
             conn.rollback()
             raise
@@ -399,6 +529,9 @@ class PgStore:
         collection_id: Optional[str],
         document_ids: Optional[list[str]] = None,
         top_k: int = 40,
+        exclude_content_types: Optional[list[str]] = None,
+        keyword_query: Optional[str] = None,
+        embedding_model: Optional[str] = None,
     ) -> list:
         """Return independent semantic and keyword candidates for Phase 3.
 
@@ -410,25 +543,34 @@ class PgStore:
                 f"Expected {BGE_M3_DIMENSIONS}-dimensional query embedding, got {len(query_embedding)}"
             )
 
-        if document_ids:
-            base_filter = 'WHERE d.id = ANY(%s)'
-            filter_params = (document_ids,)
-        elif collection_id:
-            base_filter = 'WHERE d."collectionId" = %s'
-            filter_params = (collection_id,)
-        else:
-            base_filter = "WHERE TRUE"
-            filter_params = ()
+        base_filter, filter_params = scope_filter(collection_id, document_ids)
+        exclude = list(exclude_content_types or [])
+        if exclude:
+            base_filter += " AND COALESCE(c.metadata->>'content_type', 'page_text') <> ALL(%s)"
+            filter_params = (*filter_params, exclude)
+        # OR-semantics keyword query: plainto_tsquery ANDs every word, so a
+        # natural-language question almost never matched any chunk.
+        keyword_text = keyword_query if keyword_query is not None else keyword_or_query(query)
+        # Only compare against vectors from the query's embedding model; after a
+        # model change, un-reindexed chunks are reachable by keyword only.
+        model_clause, model_params = "", ()
+        if embedding_model:
+            model_clause = (
+                ' AND EXISTS (SELECT 1 FROM "EmbeddingMetadata" em'
+                ' WHERE em."chunkId" = c.id AND em."modelName" = %s)'
+            )
+            model_params = (embedding_model,)
 
         sql = f"""
         WITH semantic_candidates AS (
             SELECT
                 c.id, c."documentId", d.title AS "documentTitle",
                 c."chunkIndex", c.content, c."pageNumber", c.metadata,
-                ROW_NUMBER() OVER (ORDER BY c.embedding <=> %s::vector) AS rank
+                ROW_NUMBER() OVER (ORDER BY c.embedding <=> %s::vector) AS rank,
+                1 - (c.embedding <=> %s::vector) AS similarity
             FROM "DocumentChunk" c
             JOIN "Document" d ON c."documentId" = d.id
-            {base_filter} AND c.embedding IS NOT NULL
+            {base_filter} AND c.embedding IS NOT NULL{model_clause}
             ORDER BY c.embedding <=> %s::vector
             LIMIT %s
         ),
@@ -439,35 +581,39 @@ class PgStore:
                 ROW_NUMBER() OVER (
                     ORDER BY ts_rank_cd(
                         to_tsvector('english', c.content),
-                        plainto_tsquery('english', %s)
+                        websearch_to_tsquery('english', %s), 32
                     ) DESC
                 ) AS rank
             FROM "DocumentChunk" c
             JOIN "Document" d ON c."documentId" = d.id
             {base_filter}
+              AND to_tsvector('english', c.content) @@ websearch_to_tsquery('english', %s)
             ORDER BY ts_rank_cd(
                 to_tsvector('english', c.content),
-                plainto_tsquery('english', %s)
+                websearch_to_tsquery('english', %s), 32
             ) DESC
             LIMIT %s
         )
         SELECT id, "documentId", "documentTitle", "chunkIndex", content,
-               "pageNumber", metadata, 'semantic' AS source, rank
+               "pageNumber", metadata, 'semantic' AS source, rank, similarity
         FROM semantic_candidates
         UNION ALL
         SELECT id, "documentId", "documentTitle", "chunkIndex", content,
-               "pageNumber", metadata, 'keyword' AS source, rank
+               "pageNumber", metadata, 'keyword' AS source, rank, NULL::float AS similarity
         FROM keyword_candidates
         ORDER BY source, rank
         """
         params = (
             query_embedding,
+            query_embedding,
             *filter_params,
+            *model_params,
             query_embedding,
             top_k,
-            query,
+            keyword_text,
             *filter_params,
-            query,
+            keyword_text,
+            keyword_text,
             top_k,
         )
 
@@ -486,6 +632,9 @@ class PgStore:
                         "metadata": _json_dict(row[6]),
                         "retrievalSource": row[7],
                         "retrievalRank": int(row[8]),
+                        # BGE-M3 cosine for semantic hits (None for keyword-only
+                        # hits); used for the no-relevant-evidence floor.
+                        "similarity": float(row[9]) if row[9] is not None else None,
                     }
                     for row in cur.fetchall()
                 ]
@@ -507,15 +656,7 @@ class PgStore:
             )
 
         filter_params: tuple[Any, ...]
-        if document_ids:
-            base_filter = 'WHERE d.id = ANY(%s)'
-            filter_params = (document_ids,)
-        elif collection_id:
-            base_filter = 'WHERE d."collectionId" = %s'
-            filter_params = (collection_id,)
-        else:
-            base_filter = "WHERE TRUE"
-            filter_params = ()
+        base_filter, filter_params = scope_filter(collection_id, document_ids)
 
         semantic_filter = f"{base_filter} AND c.embedding IS NOT NULL"
 

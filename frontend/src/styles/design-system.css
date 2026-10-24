@@ -1,0 +1,397 @@
+/* ── DocLens design system ────────────────────────────────────────────────
+   Loaded after research-platform.css, polish.css and theme-light.css.
+   One neutral palette, one accent, status colours only for status.
+   Tokens: --ds-* are new; the older --rp-* tokens are remapped here so every
+   existing rule picks up the same palette without being rewritten.
+   Landing and sign-in pages keep their own styles. */
+
+:root {
+  /* Neutrals (dark) */
+  --rp-bg:        #0b0c0e;
+  --rp-bg-2:      #0f1013;
+  --rp-surface:   #131417;
+  --rp-surface-2: #17191d;
+  --rp-surface-3: #1d2025;
+
+  --rp-border:        rgba(255, 255, 255, 0.075);
+  --rp-border-strong: rgba(255, 255, 255, 0.14);
+
+  --rp-text:       #ededef;
+  --rp-text-soft:  #b4b7bf;
+  --rp-text-muted: #848893;
+
+  /* One accent. The old decorative hues all map to it. */
+  --ds-accent:       #8d93f8;
+  --ds-accent-strong:#a3a8ff;
+  --ds-accent-soft:  rgba(141, 147, 248, 0.10);
+  --ds-accent-line:  rgba(141, 147, 248, 0.34);
+  --ds-on-accent:    #0b0c0e;
+  --rp-indigo: var(--ds-accent);
+  --rp-violet: var(--ds-accent);
+  --rp-purple: var(--ds-accent);
+  --rp-blue:   var(--ds-accent);
+  --rp-cyan:   var(--ds-accent);
+
+  /* Status */
+  --rp-green: #4cc38a;
+  --rp-amber: #e0a841;
+  --rp-rose:  #ec6a78;
+
+  --ds-hover:       rgba(255, 255, 255, 0.045);
+  --ds-hover-faint: rgba(255, 255, 255, 0.022);
+  --ds-panel:       var(--rp-surface);
+
+  /* Shape and depth */
+  --rp-radius:  10px;
+  --ds-radius-sm: 7px;
+  --ds-radius-lg: 14px;
+  --rp-shadow:  0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 24px rgba(0, 0, 0, 0.28);
+  --ds-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
+  --rp-focus:   0 0 0 3px rgba(141, 147, 248, 0.38);
+  --rp-glow-indigo: none;
+  --rp-glow-violet: none;
+
+  /* Type */
+  --rp-font:    "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --rp-display: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --rp-mono:    "DM Mono", "SFMono-Regular", Consolas, monospace;
+  --chat-inspector-bg: var(--rp-bg-2);
+}
+
+:root[data-theme="light"] {
+  --rp-bg:        #f7f7f8;
+  --rp-bg-2:      #f1f1f3;
+  --rp-surface:   #ffffff;
+  --rp-surface-2: #f7f7f9;
+  --rp-surface-3: #eeeff2;
+  --rp-border:        rgba(17, 19, 24, 0.09);
+  --rp-border-strong: rgba(17, 19, 24, 0.16);
+  --rp-text:       #16181d;
+  --rp-text-soft:  #464a54;
+  --rp-text-muted: #6b707b;
+  --ds-accent:       #5157d6;
+  --ds-accent-strong:#3f45c4;
+  --ds-accent-soft:  rgba(81, 87, 214, 0.08);
+  --ds-accent-line:  rgba(81, 87, 214, 0.32);
+  --ds-on-accent:    #ffffff;
+  --rp-indigo: var(--ds-accent);
+  --rp-violet: var(--ds-accent);
+  --rp-purple: var(--ds-accent);
+  --rp-blue:   var(--ds-accent);
+  --rp-cyan:   var(--ds-accent);
+  --rp-green: #18794e;
+  --rp-amber: #a35c00;
+  --rp-rose:  #c4293c;
+  --ds-hover:       rgba(17, 19, 24, 0.045);
+  --ds-hover-faint: rgba(17, 19, 24, 0.025);
+  --rp-shadow:  0 1px 2px rgba(17, 19, 24, 0.05), 0 4px 14px rgba(17, 19, 24, 0.05);
+  --ds-shadow-pop: 0 12px 36px rgba(17, 19, 24, 0.14);
+  --rp-focus:   0 0 0 3px rgba(81, 87, 214, 0.28);
+  --chat-inspector-bg: var(--rp-surface);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────── */
+.research-app-shell {
+  font-family: var(--rp-font);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  background: var(--rp-bg);
+}
+:root[data-theme="light"] .research-app-shell { background: var(--rp-bg); }
+
+/* No grid texture or colour washes behind content. */
+.research-main,
+:root[data-theme="light"] .research-main { background: none; }
+
+.research-app-shell ::selection { background: var(--ds-accent-line); }
+
+/* ── Sidebar ─────────────────────────────────────────────────────────── */
+.research-sidebar { background: var(--rp-bg-2); border-right: 1px solid var(--rp-border); }
+.brand-mark { background: var(--rp-surface-2); border-color: var(--rp-border); }
+.brand-lockup strong { letter-spacing: -0.01em; font-weight: 650; }
+.sidebar-section-label {
+  font-family: var(--rp-font);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* ── Topbar: the page header already names the page, so no subtitle. ─── */
+.research-topbar { background: color-mix(in srgb, var(--rp-bg) 88%, transparent); backdrop-filter: blur(10px); }
+.topbar-title span { display: none; }
+.topbar-title strong { font-size: 0.9rem; font-weight: 600; letter-spacing: -0.005em; }
+.topbar-search { background: var(--rp-surface); }
+.topbar-status { font-family: var(--rp-font); }
+
+/* ── Page header ─────────────────────────────────────────────────────── */
+.eyebrow {
+  margin-bottom: 6px;
+  color: var(--rp-text-muted);
+  font-family: var(--rp-font);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+.research-page-header h1 {
+  font-size: clamp(1.4rem, 1.6vw, 1.85rem);
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  line-height: 1.15;
+}
+.research-page-header p { color: var(--rp-text-muted); font-size: 0.9rem; }
+.header-meta { font-family: var(--rp-font); }
+
+/* ── Buttons ─────────────────────────────────────────────────────────── */
+.rp-button {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: var(--ds-radius-sm);
+  font-weight: 600;
+  font-size: 0.84rem;
+  background: var(--rp-surface-2);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.rp-button:hover:not(:disabled) { transform: none; background: var(--rp-surface-3); border-color: var(--rp-border-strong); }
+.rp-button-primary { background: var(--ds-accent); border-color: var(--ds-accent); color: var(--ds-on-accent); }
+.rp-button-primary:hover:not(:disabled) { background: var(--ds-accent-strong); border-color: var(--ds-accent-strong); }
+.rp-button-secondary { background: var(--ds-accent-soft); border-color: var(--ds-accent-line); color: var(--ds-accent); }
+.rp-button-ghost { background: transparent; border-color: transparent; }
+.rp-button:focus-visible, .status-pill:focus-visible, .prompt-input-send:focus-visible { outline: none; box-shadow: var(--rp-focus); }
+
+/* ── Surfaces ────────────────────────────────────────────────────────── */
+.research-panel,
+.research-command-panel,
+.research-stat-card,
+.paper-card,
+.collection-card,
+:root[data-theme="light"] .research-panel,
+:root[data-theme="light"] .research-command-panel,
+:root[data-theme="light"] .research-stat-card,
+:root[data-theme="light"] .paper-card,
+:root[data-theme="light"] .collection-card {
+  background: var(--rp-surface);
+  border: 1px solid var(--rp-border);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--rp-shadow);
+}
+.paper-card:hover,
+.collection-card:hover,
+.research-stat-card.is-clickable:hover,
+:root[data-theme="light"] .paper-card:hover,
+:root[data-theme="light"] .collection-card:hover {
+  background: var(--rp-surface-2);
+  border-color: var(--rp-border-strong);
+}
+.panel-header span {
+  font-family: var(--rp-font);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+.panel-header h2, .panel-header h3 { letter-spacing: -0.01em; font-weight: 600; }
+
+/* Decorative tiles share the accent; only status keeps its colour. */
+.research-stat-card, .collection-card, .paper-card, .activity-item, .dash-quick-action { --tone: var(--ds-accent); }
+.stat-icon,
+.paper-file-icon,
+.collection-icon,
+.empty-icon,
+.dash-quick-action .qa-icon,
+.dash-quick-action[class*="tone-"] .qa-icon {
+  color: var(--ds-accent);
+  background: var(--ds-accent-soft);
+  border-color: transparent;
+  border-radius: var(--ds-radius-sm);
+}
+.stat-value { font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.stat-label { font-weight: 600; }
+.stat-trend, .growth-indicator, .collection-status, .citation-badge {
+  font-family: var(--rp-font);
+  font-size: 0.72rem;
+  color: var(--rp-text-muted);
+}
+.overview-metric span { font-family: var(--rp-font); text-transform: none; letter-spacing: 0.01em; font-size: 0.74rem; }
+.overview-metric strong { font-variant-numeric: tabular-nums; }
+
+/* ── Badges and filters ──────────────────────────────────────────────── */
+.status-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 0;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-family: var(--rp-font);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: none;
+}
+.status-pill {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: transparent;
+  font-family: var(--rp-font);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.status-pill.active { --pill-color: var(--rp-text); background: var(--rp-surface-3); border-color: var(--rp-border-strong); }
+.research-table th { font-family: var(--rp-font); text-transform: none; letter-spacing: 0.01em; font-weight: 600; }
+.settings-section-label, .pipeline-label, .form-row label, .signal-row, .status-indicator {
+  font-family: var(--rp-font);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ── Fields ──────────────────────────────────────────────────────────── */
+.field-control,
+.research-app-shell input[type="text"],
+.research-app-shell input[type="search"],
+.research-app-shell textarea,
+.research-app-shell select {
+  border-radius: var(--ds-radius-sm);
+}
+.field-control { background: var(--rp-surface); border: 1px solid var(--rp-border); color: var(--rp-text); }
+.field-control:focus { outline: none; border-color: var(--ds-accent-line); box-shadow: var(--rp-focus); }
+
+/* ── Chat ────────────────────────────────────────────────────────────── */
+.message span { font-family: var(--rp-font); font-size: 0.74rem; font-weight: 600; text-transform: none; letter-spacing: 0; }
+.message p,
+.message.assistant p { background: var(--rp-surface); border-color: var(--rp-border); color: var(--rp-text-soft); border-radius: var(--ds-radius-lg); }
+.message.user p,
+:root[data-theme="light"] .message.user p {
+  background: var(--ds-accent-soft);
+  border-color: var(--ds-accent-line);
+  color: var(--rp-text);
+}
+
+.prompt-input {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--rp-border-strong);
+  border-radius: var(--ds-radius-lg);
+  background: var(--rp-surface);
+  box-shadow: var(--rp-shadow);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.prompt-input:focus-within { border-color: var(--ds-accent-line); box-shadow: var(--rp-focus); }
+.prompt-input-field {
+  width: 100%;
+  padding: 14px 16px 6px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--rp-text);
+  font: inherit;
+  font-size: 0.92rem;
+  line-height: 1.6;
+  caret-color: var(--ds-accent);
+}
+.prompt-input-field::placeholder { color: var(--rp-text-muted); }
+.prompt-input-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px 10px 16px; }
+.prompt-input-hint { color: var(--rp-text-muted); font-size: 0.72rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-input-send {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ds-accent);
+  color: var(--ds-on-accent);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.prompt-input-send:hover:not(:disabled) { background: var(--ds-accent-strong); }
+.prompt-input-send:disabled { background: var(--rp-surface-3); color: var(--rp-text-muted); cursor: not-allowed; }
+.prompt-input-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--rp-text) 20%, transparent);
+  border-top-color: var(--rp-text);
+  border-radius: 50%;
+  animation: ds-spin 0.7s linear infinite;
+}
+@keyframes ds-spin { to { transform: rotate(360deg); } }
+
+/* Answer labels (abstention, conflict, unverified claims, fallback). */
+.answer-flags { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.answer-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.answer-flag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.answer-flag.is-warn { color: var(--rp-amber); background: color-mix(in srgb, var(--rp-amber) 11%, transparent); }
+.answer-flag.is-conflict { color: var(--rp-rose); background: color-mix(in srgb, var(--rp-rose) 11%, transparent); }
+.answer-flag.is-muted { color: var(--rp-text-muted); background: var(--ds-hover); }
+
+/* General knowledge is visually separate from cited evidence. */
+.answer-background {
+  max-width: 78%;
+  margin-top: 2px;
+  padding: 10px 14px;
+  border: 1px dashed var(--rp-border-strong);
+  border-radius: var(--ds-radius-lg);
+  background: transparent;
+}
+.answer-background-label { color: var(--rp-text-muted); font-size: 0.72rem; font-weight: 600; margin-bottom: 4px; }
+.answer-background p { margin: 0; padding: 0; border: 0; background: none; color: var(--rp-text-soft); font-size: 0.88rem; line-height: 1.6; max-width: none; }
+
+/* Citations: one accent, numbers in tabular figures. */
+.cite-ref, .citation-chip { font-variant-numeric: tabular-nums; }
+.citation-chip { border-color: var(--ds-accent-line); background: var(--ds-accent-soft); color: var(--ds-accent); font-family: var(--rp-font); }
+.source-card.is-active { border-color: var(--ds-accent-line); background: var(--ds-accent-soft); }
+
+@media (max-width: 900px) {
+  .answer-background { max-width: 100%; }
+  .prompt-input-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message { animation: none; }
+  .prompt-input-spinner { animation-duration: 1.6s; }
+}
+
+/* ── Dashboard ───────────────────────────────────────────────────────── */
+.research-command-panel { min-height: 0; padding: 20px; }
+.command-search,
+:root[data-theme="light"] .command-search { padding: 0; border: 0; background: none; box-shadow: none; }
+.command-search h2 { font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
+.semantic-input,
+:root[data-theme="light"] .semantic-input { background: var(--rp-bg); border-color: var(--rp-border-strong); border-radius: var(--ds-radius-sm); }
+.semantic-input:focus-within { border-color: var(--ds-accent-line); box-shadow: var(--rp-focus); }
+.semantic-input button { background: var(--ds-accent); color: var(--ds-on-accent); border: 0; border-radius: var(--ds-radius-sm); }
+.dash-quick-action { background: var(--rp-surface); border: 1px solid var(--rp-border); border-radius: var(--ds-radius-lg); }
+.dash-quick-action:hover { background: var(--rp-surface-2); border-color: var(--rp-border-strong); }
+.research-stat-card { min-height: 0; gap: 2px; }
+.research-stat-card p { min-height: 0; }
+
+/* ── Brand mark (sidebar) ────────────────────────────────────────────── */
+.brand-glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: var(--ds-radius-sm);
+  color: var(--ds-on-accent);
+  background: var(--ds-accent);
+}
+
+/* ── Collection cards ────────────────────────────────────────────────── */
+.collection-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.paper-meta-grid span,
+.collection-metrics span { border-radius: var(--ds-radius-sm); background: var(--rp-bg-2); border-color: transparent; }
+.paper-meta-grid strong,
+.collection-metrics strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+.card-link { color: var(--ds-accent); font-weight: 600; font-size: 0.84rem; }
+.card-link:hover:not(:disabled) { color: var(--ds-accent-strong); }
+.concept-row span { border-radius: 999px; background: var(--ds-hover); border-color: transparent; }

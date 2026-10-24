@@ -8,8 +8,8 @@ const NotFoundPage = () => {
     <div className="not-found-shell">
       <EmptyState
         icon="search"
-        title="Research route not found"
-        description="This sidebar destination or deep link does not exist. Use the Research Command Center to continue without losing the app shell."
+        title="Page not found"
+        description="This link does not match any page in DocLens. It may be mistyped or out of date."
         action={<ActionButton icon="dashboard" onClick={() => navigateTo(PAGES.DASHBOARD)}>Open Dashboard</ActionButton>}
       />
     </div>

@@ -169,7 +169,7 @@ const CollectionPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Collection Intelligence"
+        eyebrow="Collection"
         title={collection.name}
         description={collection.description || "A research domain containing papers, concepts, citations, and analytics."}
         meta={`${collection.workspaceName || "Research Workspace"} / ${metrics.papers} papers / ${metrics.concepts} concepts`}
@@ -204,9 +204,9 @@ const CollectionPage = () => {
       {tab === "overview" && (
         <>
           <section className="analytics-grid" style={{ marginTop: 14 }}>
-            <ResearchStatCard icon="papers" label="Papers" value={metrics.papers} trend="domain" growth={`${metrics.ready} ready`} description="Papers attached to this research collection." tone="blue" />
-            <ResearchStatCard icon="spark" label="Concepts" value={metrics.concepts} trend="extracted" growth="methods and datasets" description="Concepts available for exploration." tone="cyan" />
-            <ResearchStatCard icon="citation" label="Citations" value={metrics.citations} trend="grounded" growth="source references" description="Citation anchors for answers and summaries." tone="amber" />
+            <ResearchStatCard icon="papers" label="Papers" value={metrics.papers} growth={`${metrics.ready} ready`} description="Papers attached to this research collection." tone="blue" />
+            <ResearchStatCard icon="spark" label="Concepts" value={metrics.concepts} growth="methods and datasets" description="Concepts available for exploration." tone="cyan" />
+            <ResearchStatCard icon="citation" label="Citations" value={metrics.citations} growth="source references" description="Citation anchors for answers and summaries." tone="amber" />
           </section>
           <section className="dashboard-section-grid">
             <Panel title="Collection Papers" eyebrow="Recent">

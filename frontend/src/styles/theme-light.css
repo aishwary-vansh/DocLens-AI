@@ -1,0 +1,84 @@
+/* ── Light theme for the app shell ─────────────────────────────────────────
+   Activated by <html data-theme="light"> (hooks/useTheme.js). Overrides the
+   --rp-* tokens from research-platform.css plus the few surfaces that were
+   written as fixed dark colours there. Landing and sign-in keep their own
+   dark design. */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --rp-bg:        #f5f6fa;
+  --rp-bg-2:      #eef0f6;
+  --rp-surface:   #ffffff;
+  --rp-surface-2: #f6f7fb;
+  --rp-surface-3: #eceff5;
+
+  --rp-border:        rgba(15, 23, 42, 0.10);
+  --rp-border-strong: rgba(15, 23, 42, 0.18);
+
+  --rp-text:       #0f172a;
+  --rp-text-soft:  rgba(15, 23, 42, 0.78);
+  --rp-text-muted: rgba(15, 23, 42, 0.52);
+
+  --rp-indigo:  #4f46e5;
+  --rp-violet:  #7c3aed;
+  --rp-cyan:    #0369a1;
+  --rp-green:   #047857;
+  --rp-amber:   #b45309;
+  --rp-rose:    #be123c;
+  --rp-blue:    #1d4ed8;
+  --rp-purple:  #7e22ce;
+
+  --rp-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --rp-focus: 0 0 0 3px rgba(79, 70, 229, 0.35);
+}
+
+:root[data-theme="light"] html,
+:root[data-theme="light"] body,
+:root[data-theme="light"] #root { background: var(--rp-bg); }
+
+:root[data-theme="light"] .research-app-shell {
+  background:
+    linear-gradient(180deg, rgba(79, 70, 229, 0.05), transparent 26rem),
+    var(--rp-bg);
+}
+:root[data-theme="light"] .research-main {
+  background:
+    linear-gradient(rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Surfaces that research-platform.css hard-codes as dark */
+:root[data-theme="light"] .research-sidebar { background: #ffffff; }
+:root[data-theme="light"] .research-topbar { background: rgba(255, 255, 255, 0.86); }
+:root[data-theme="light"] :is(
+  .research-command-panel, .command-search, .research-stat-card, .collection-card,
+  .explorer-panel, .pdf-viewer, .chat-interface, .research-panel, .paper-card
+) { background: #ffffff; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04); }
+:root[data-theme="light"] .collection-card:hover,
+:root[data-theme="light"] .paper-card:hover { background: #ffffff; }
+:root[data-theme="light"] :is(.overview-metric, .semantic-input, .rp-skeleton) { background: var(--rp-surface-2); }
+:root[data-theme="light"] .field-control,
+:root[data-theme="light"] .field-control:focus { background: #ffffff; color: var(--rp-text); }
+:root[data-theme="light"] .modal-backdrop { background: rgba(15, 23, 42, 0.35); }
+:root[data-theme="light"] .message.assistant p,
+:root[data-theme="light"] .message-body { background: #ffffff; }
+:root[data-theme="light"] .message.user p { background: rgba(79, 70, 229, 0.08); }
+:root[data-theme="light"] .topbar-menu { background: #ffffff; box-shadow: 0 20px 50px rgba(15, 23, 42, 0.16); }
+:root[data-theme="light"] .rp-button-primary { color: #ffffff; }
+:root[data-theme="light"] .rp-skeleton span {
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.05) 0%, rgba(15, 23, 42, 0.10) 50%, rgba(15, 23, 42, 0.05) 100%) !important;
+  background-size: 200% 100% !important;
+}
+
+/* Hover / card shadows tuned for a light background */
+:root[data-theme="light"] .research-stat-card:hover,
+:root[data-theme="light"] .collection-card:hover,
+:root[data-theme="light"] .paper-card:hover { box-shadow: 0 14px 30px rgba(15, 23, 42, 0.10); }
+:root[data-theme="light"] .sidebar-nav-button:hover { background: rgba(15, 23, 42, 0.04); }
+:root[data-theme="light"] .md-answer pre { background: #f6f7fb; }
+:root[data-theme="light"] .md-answer .md-note { color: #92400e; }
+:root[data-theme="light"] .message-evidence-note { color: #b45309 !important; }
+:root[data-theme="light"] .mobile-nav-backdrop { background: rgba(15, 23, 42, 0.3); }
+:root[data-theme="light"] .research-app-shell * { scrollbar-color: rgba(15, 23, 42, 0.2) transparent; }

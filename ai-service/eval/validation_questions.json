@@ -1,0 +1,17 @@
+{
+  "description": "Validation set for tuning retrieval knobs (router section boost, rerank pool). Disjoint from gold_questions.json, which stays the held-out test set: tune here, report there. Same format and matching rule as gold_questions.json. Gold strings were checked against the parsed section chunks of the local uploads on 2026-10-23.",
+  "questions": [
+    {"id": "v-bert-size", "paper": "BERT", "question": "What are the layer, hidden size and head counts of BERT-LARGE?", "gold": "L=24, H=1024, A=16"},
+    {"id": "v-bert-batch", "paper": "BERT", "question": "What batch size was used for BERT pre-training?", "gold": "batch size of 256 sequences"},
+    {"id": "v-bert-squad", "paper": "BERT", "question": "What SQuAD v1.1 F1 score does BERT reach?", "gold": "SQuAD v1.1 question answering Test F1 to 93.2"},
+    {"id": "v-bert-vocab", "paper": "BERT", "question": "What vocabulary and tokenization does BERT use?", "gold": "WordPiece embeddings (Wu et al., 2016) with a 30,000 token vocabulary"},
+    {"id": "v-attn-hw", "paper": "Attention", "question": "On what hardware was the Transformer trained?", "gold": "8 NVIDIA P100 GPUs"},
+    {"id": "v-attn-beam", "paper": "Attention", "question": "Which decoding settings were used at inference time for translation?", "gold": "beam size of 4"},
+    {"id": "v-attn-ffn", "paper": "Attention", "question": "What is the inner dimensionality of the position-wise feed-forward network?", "gold": "dff = 2048"},
+    {"id": "v-attn-enfr", "paper": "Attention", "question": "What BLEU does the Transformer reach on English-to-French?", "gold": "BLEU score of 41.0"},
+    {"id": "v-gpt3-ctx", "paper": "Few-Shot", "question": "How large is GPT-3's context window?", "gold": "nctx = 2048"},
+    {"id": "v-gpt3-lang", "paper": "Few-Shot", "question": "How much of GPT-3's training data is not English?", "gold": "7% non-English content"},
+    {"id": "v-covid-alert", "paper": "COVID", "question": "How could COVID-19 cases be detected in real time from wearable data?", "gold": "two-tiered warning system"},
+    {"id": "v-covid-controls", "paper": "COVID", "question": "Which control individuals were analysed in the smartwatch study?", "gold": "15 individuals with confirmed illness that was not due to severe acute respiratory syndrome"}
+  ]
+}

@@ -15,6 +15,7 @@ import { AuthService }   from './auth.service';
 import { JwtStrategy }   from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
 import { UsersService }  from '../users/users.service';
+import { GoogleTokenVerifier } from './google-token.verifier';
 import { appConfig }     from '../config/app.config';
 
 // ── Minimal in-memory user store for tests ───────────────────────────────────
@@ -74,6 +75,7 @@ describe('AuthService — full auth flow', () => {
         AuthService,
         LocalStrategy,
         JwtStrategy,
+        GoogleTokenVerifier,
         { provide: UsersService, useValue: fakeUsers },
       ],
     }).compile();

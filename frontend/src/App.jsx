@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import logoUrl from "@/assets/logo.png";
 import { useAuth } from "./contexts/AuthContext";
-import { AppProvider, useApp, PAGES } from "./contexts/AppContext";
+import { AppProvider, useApp, PAGES, PUBLIC_PAGES } from "./contexts/AppContext";
 import { ToastProvider } from "./contexts/ToastContext";
 import { SocketProvider } from "./contexts/SocketContext";
 import Layout from "./components/layout/Layout";
@@ -18,6 +18,9 @@ import NotFoundPage from "./pages/NotFoundPage";
 import Login from "./pages/Login";
 import Landing from "./pages/Landing";
 import "./styles/research-platform.css";
+import "./styles/polish.css";
+import "./styles/theme-light.css";
+import "./styles/design-system.css";
 
 function LoadingSplash() {
   return (
@@ -60,68 +63,86 @@ function ActivePage() {
   return <NotFoundPage />;
 }
 
+const AFTER_LOGIN_KEY = "doclens_after_login";
+
 function AppInner() {
   const { isAuthenticated, isLoading, logout } = useAuth();
-  const { activePage, activeCollectionId } = useApp();
-  const [showLogin, setShowLogin] = useState(false);
-  const [showLanding, setShowLanding] = useState(false);
+  const { activePage, activeCollectionId, navigateTo } = useApp();
+  const isPublic = PUBLIC_PAGES.has(activePage);
+  const isAuthPage = activePage === PAGES.LOGIN || activePage === PAGES.REGISTER;
+  const wasAuthenticated = useRef(false);
+
+  // Route guards. Hash routes are public (landing, login, register) or
+  // protected (everything in the app shell, and unknown routes).
+  useEffect(() => {
+    if (isLoading) return;
+    const signedOut = wasAuthenticated.current && !isAuthenticated;
+    wasAuthenticated.current = isAuthenticated;
+    if (signedOut) {
+      // Signing out (from any menu) returns to the home page, with no stale return target.
+      try { sessionStorage.removeItem(AFTER_LOGIN_KEY); } catch { /* ignore */ }
+      if (!isPublic) navigateTo(PAGES.LANDING, null, null, { replace: true });
+      return;
+    }
+    if (!isAuthenticated && !isPublic) {
+      // Remember where the user was going, then ask them to sign in.
+      try { sessionStorage.setItem(AFTER_LOGIN_KEY, window.location.hash); } catch { /* storage unavailable */ }
+      navigateTo(PAGES.LOGIN, null, null, { replace: true });
+    } else if (isAuthenticated && isAuthPage) {
+      let next = "";
+      try { next = sessionStorage.getItem(AFTER_LOGIN_KEY) || ""; sessionStorage.removeItem(AFTER_LOGIN_KEY); } catch { /* ignore */ }
+      if (next && next.startsWith("#/") && !/^#\/(login|register|signup)?$/.test(next)) {
+        window.history.replaceState(null, "", next);
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } else {
+        navigateTo(PAGES.DASHBOARD, null, null, { replace: true });
+      }
+    }
+  }, [isAuthenticated, isLoading, isPublic, isAuthPage, navigateTo]);
+
+  const signOut = useCallback(() => {
+    logout();
+    navigateTo(PAGES.LANDING);
+  }, [logout, navigateTo]);
 
   if (isLoading) return <LoadingSplash />;
 
-  // Authenticated user explicitly asked to see the landing page
-  if (isAuthenticated && showLanding) {
+  if (activePage === PAGES.LANDING) {
     return (
       <>
-        {/* Floating banner so the user can get back into the app */}
-        <div style={{
-          position: 'fixed', top: 16, right: 16, zIndex: 9999,
-          display: 'flex', gap: 8, alignItems: 'center',
-        }}>
-          <button
-            onClick={() => setShowLanding(false)}
-            style={{
-              padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(110,231,249,0.35)',
-              background: 'rgba(110,231,249,0.12)', color: '#6ee7f9',
-              fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer',
-            }}
-          >
-            ← Back to App
-          </button>
-          <button
-            onClick={logout}
-            style={{
-              padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(242,139,130,0.35)',
-              background: 'rgba(242,139,130,0.1)', color: '#f28b82',
-              fontWeight: 700, fontSize: '0.84rem', cursor: 'pointer',
-            }}
-          >
-            Sign out
-          </button>
-        </div>
-        <Landing onGetStarted={() => setShowLanding(false)} />
+        {isAuthenticated && (
+          // Signed-in visitors on the landing page get a way back into the app.
+          <div className="landing-session-bar">
+            <button type="button" className="landing-session-primary" onClick={() => navigateTo(PAGES.DASHBOARD)}>
+              Open workspace →
+            </button>
+            <button type="button" className="landing-session-ghost" onClick={signOut}>Sign out</button>
+          </div>
+        )}
+        <Landing onGetStarted={() => navigateTo(isAuthenticated ? PAGES.DASHBOARD : PAGES.REGISTER)} />
       </>
     );
   }
 
-  if (!isAuthenticated) {
-    if (showLogin) {
-      return (
-      <>
-        <Login />
-        </>
-      );
-    }
-    return <Landing onGetStarted={() => setShowLogin(true)} />;
+  if (isAuthPage) {
+    if (isAuthenticated) return <LoadingSplash />; // redirecting to the app
+    return (
+      <Login
+        mode={activePage === PAGES.REGISTER ? "register" : "login"}
+        onModeChange={(mode) => navigateTo(mode === "register" ? PAGES.REGISTER : PAGES.LOGIN, null, null, { replace: true })}
+        onBack={() => navigateTo(PAGES.LANDING)}
+      />
+    );
   }
 
+  if (!isAuthenticated) return <LoadingSplash />; // redirecting to sign in
+
   return (
-    <>
-      <Layout onShowLanding={() => setShowLanding(true)}>
-        <ErrorBoundary resetKey={`${activePage}-${activeCollectionId || ""}`}>
-          <ActivePage />
-        </ErrorBoundary>
-      </Layout>
-    </>
+    <Layout onShowLanding={() => navigateTo(PAGES.LANDING)} onSignOut={signOut}>
+      <ErrorBoundary resetKey={`${activePage}-${activeCollectionId || ""}`}>
+        <ActivePage />
+      </ErrorBoundary>
+    </Layout>
   );
 }
 

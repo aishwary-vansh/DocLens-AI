@@ -23,6 +23,8 @@ interface AuthState {
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
+  loginWithGoogle: (credential: string) => Promise<void>;
+  updateUser: (user: UserProfile) => void;
   logout: () => void;
   error: string | null;
   clearError: () => void;
@@ -88,6 +90,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     [],
   );
 
+  // ── Google sign-in ──────────────────────────────────────────────────────
+  const loginWithGoogle = useCallback(async (credential: string) => {
+    setError(null);
+    try {
+      const { accessToken, user } = await authApi.google(credential);
+      tokenStorage.set(accessToken);
+      setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Google sign-in failed');
+      throw e;
+    }
+  }, []);
+
+  // ── Profile edits (Settings) ────────────────────────────────────────────
+  const updateUser = useCallback((user: UserProfile) => {
+    setState((s) => ({ ...s, user }));
+  }, []);
+
   // ── Logout ──────────────────────────────────────────────────────────────
   const logout = useCallback(() => {
     tokenStorage.clear();
@@ -100,6 +120,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         ...state,
         login,
         register,
+        loginWithGoogle,
+        updateUser,
         logout,
         error,
         clearError: () => setError(null),

@@ -157,3 +157,6 @@ docker-compose.local.yml
 
 # Docker local volumes / data
 .docker/
+
+# Prisma client (regenerate with `prisma generate`)
+backend/generated/

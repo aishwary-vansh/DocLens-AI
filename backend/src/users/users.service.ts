@@ -50,6 +50,10 @@ export class UsersService {
     });
   }
 
+  async update(id: string, data: { name?: string; passwordHash?: string }): Promise<User> {
+    return this.prisma.user.update({ where: { id }, data });
+  }
+
   toProfile(user: User): SafeUser {
     const { passwordHash, ...profile } = user;
     return profile;

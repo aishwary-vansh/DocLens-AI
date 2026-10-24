@@ -54,9 +54,12 @@ services:
       REDIS_URL: redis://redis:6379
       # Inter-container URL for AI service — never use localhost here
       AI_SERVICE_URL: http://ai-service:8000
+      AI_REQUEST_TIMEOUT_MS: ${AI_REQUEST_TIMEOUT_MS:-180000}
+      AI_SYNTHESIS_TIMEOUT_MS: ${AI_SYNTHESIS_TIMEOUT_MS:-280000}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       # CORS: allow any origin (nginx fronts the app; set a specific list for production)
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@doclens.ai}
@@ -88,10 +91,27 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://doclens:doclens-dev-password@postgres:5432/doclens}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      LLM_MODEL: ${LLM_MODEL:-gemini-1.5-flash}
+      LLM_MODEL: ${LLM_MODEL:-gemini-2.5-flash}
+      PAPER_PROFILE_ENABLED: ${PAPER_PROFILE_ENABLED:-true}
+      CHUNK_MAX_CHARS: ${CHUNK_MAX_CHARS:-2000}
+      CHUNK_OVERLAP_CHARS: ${CHUNK_OVERLAP_CHARS:-300}
+      # Latency knobs (docs/RAG_PIPELINE.md §5, §11)
+      RERANK_CANDIDATES: ${RERANK_CANDIDATES:-20}
+      RERANKER_MAX_LENGTH: ${RERANKER_MAX_LENGTH:-512}
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-true}
+      ROUTER_SECTION_BOOST: ${ROUTER_SECTION_BOOST:-0}
+      RETRIEVAL_MIN_SIMILARITY: ${RETRIEVAL_MIN_SIMILARITY:-0.48}
+      RETRIEVAL_MIN_RERANK: ${RETRIEVAL_MIN_RERANK:-0}
+      MODEL_WARMUP: ${MODEL_WARMUP:-true}
+      LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-60}
+      LLM_MAX_RETRIES: ${LLM_MAX_RETRIES:-1}
+      SYNTHESIS_LLM_TIMEOUT_S: ${SYNTHESIS_LLM_TIMEOUT_S:-100}
+      SYNTHESIS_RERANK_BUDGET: ${SYNTHESIS_RERANK_BUDGET:-60}
       VISION_ENABLED: ${VISION_ENABLED:-true}
       VISION_MAX_PAGES: ${VISION_MAX_PAGES:-12}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      # /ingest only reads PDFs from the shared upload volume
+      INGEST_ALLOWED_DIR: /app/uploads
       PORT: 8000
     ports:
       - "8000:8000"

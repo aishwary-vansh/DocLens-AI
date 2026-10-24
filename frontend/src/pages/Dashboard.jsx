@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useApp, PAGES } from "../contexts/AppContext";
+import { useAuth } from "../contexts/AuthContext";
+import { queryApi } from "../services/api";
 import useResearchCorpus from "../hooks/useResearchCorpus";
 import {
   ActionButton,
@@ -24,15 +26,39 @@ import {
 
 // Getting Started removed to save vertical space
 
+function greeting() {
+  const hour = new Date().getHours();
+  return hour < 5 ? "Working late" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+}
+
+const QUICK_ACTIONS = [
+  { page: PAGES.CHAT, icon: "chat", title: "Ask a question", text: "Cited answers from your papers", tone: "blue" },
+  { page: PAGES.PAPERS, icon: "upload", title: "Upload papers", text: "PDFs are parsed and indexed", tone: "green" },
+  { page: PAGES.COMPARE_PAPERS, icon: "spark", title: "Compare papers", text: "Methods, data and results side by side", tone: "amber" },
+  { page: PAGES.LITERATURE_REVIEWS, icon: "book", title: "Literature review", text: "Synthesis and research gaps", tone: "rose" },
+];
+
 const Dashboard = () => {
   const { navigateTo } = useApp();
+  const { user } = useAuth();
   const { workspaces, collections, papers, loading, error } = useResearchCorpus();
   const [semanticQuery, setSemanticQuery] = useState(localStorage.getItem("doclens_last_query") || "");
+  // Server-side counts (queries, reviews); the local corpus covers the rest.
+  const [serverStats, setServerStats] = useState(null);
 
-  const stats = useMemo(() => buildResearchStats({ workspaces, collections, papers }), [collections, papers, workspaces]);
+  useEffect(() => {
+    let cancelled = false;
+    queryApi.analytics().then((value) => { if (!cancelled) setServerStats(value); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  const stats = useMemo(
+    () => buildResearchStats({ workspaces, collections, papers, serverStats }),
+    [collections, papers, workspaces, serverStats],
+  );
+  const firstName = (user?.name || "").trim().split(/\s+/)[0];
   const activity = useMemo(() => buildActivityFeed({ collections, papers }), [collections, papers]);
   const visibleCollections = collections.length ? collections.slice(0, 4) : suggestedCollections;
-  const hasQuery = Number(localStorage.getItem("doclens_query_count") || 0) > 0;
 
   const runQuery = () => {
     if (semanticQuery.trim()) {
@@ -47,9 +73,13 @@ const Dashboard = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Research Command Center"
-        title="Paper intelligence, not another dashboard."
-        description="DocLens turns uploaded papers into searchable collections and citation-aware answers."
+        eyebrow="Overview"
+        title={`${greeting()}${firstName ? `, ${firstName}` : ""}.`}
+        description={
+          stats.processing
+            ? `${stats.processing} paper${stats.processing === 1 ? " is" : "s are"} being indexed. Everything else is ready to question.`
+            : "Your papers are indexed and ready. Ask a question, compare studies or draft a review."
+        }
         actions={(
           <>
             <ActionButton icon="upload" onClick={() => navigateTo(PAGES.PAPERS)}>Upload Paper</ActionButton>
@@ -59,37 +89,26 @@ const Dashboard = () => {
 
       <ErrorNotice message={error && "Live corpus data unavailable. The research workspace shell is still ready."} />
 
+      <nav className="dash-quick-actions" aria-label="Quick actions">
+        {QUICK_ACTIONS.map((action) => (
+          <button key={action.page} type="button" className={`dash-quick-action tone-${action.tone}`} onClick={() => navigateTo(action.page)}>
+            <span className="qa-icon"><Icon name={action.icon} size={18} /></span>
+            <span className="qa-text">
+              <strong>{action.title}</strong>
+              <small>{action.text}</small>
+            </span>
+          </button>
+        ))}
+      </nav>
 
 
       {/* Command panel */}
       <section style={{ marginTop: 14 }}>
         <div className="research-command-panel">
-          <div>
-            <div className="eyebrow">Research Overview</div>
-            <div className="overview-metrics">
-              <div className="overview-metric">
-                <strong>{papers.length > 0 ? stats.papersUploaded : "—"}</strong>
-                <span>Total papers</span>
-              </div>
-              <div className="overview-metric">
-                <strong>{collections.length > 0 ? stats.collectionsCreated : "—"}</strong>
-                <span>Active collections</span>
-              </div>
-              <div className="overview-metric">
-                <strong>{stats.queriesAsked > 0 ? stats.queriesAsked : "—"}</strong>
-                <span>Recent queries</span>
-              </div>
-              <div className="overview-metric">
-                <strong>{stats.conceptsExtracted > 0 ? stats.conceptsExtracted : "—"}</strong>
-                <span>Concepts Extracted</span>
-              </div>
-            </div>
-          </div>
-
           <div className="command-search">
             <div>
-              <h2>Ask your research corpus</h2>
-              <p>Start a grounded research session across papers, extracted concepts, and source-backed citations.</p>
+              <h2>Ask your papers</h2>
+              <p>Answers quote and cite the passages they come from, and say so when your papers do not cover the question.</p>
             </div>
             <div className="semantic-input">
               <Icon name="search" size={18} />
@@ -108,12 +127,12 @@ const Dashboard = () => {
       </section>
 
       {/* Stats row */}
-      <section className="stat-grid" aria-label="Research intelligence metrics">
-        <ResearchStatCard icon="papers" label="Papers Uploaded" value={stats.papersUploaded} trend="+ live" growth={`${stats.completed} ready for analysis`} description="PDFs imported into the research library." tone="blue" />
-        <ResearchStatCard icon="collections" label="Collections" value={stats.collectionsCreated} trend="+ domains" growth={`${stats.workspaces} workspace${stats.workspaces !== 1 ? "s" : ""}`} description="Research domains used to organize papers." tone="green" />
-        <ResearchStatCard icon="book" label="Literature Reviews" value={stats.literatureReviews} trend="+ synthesis" growth="multi-paper reports" description="Generated reviews synthesizing multiple sources." tone="cyan" />
-        <ResearchStatCard icon="citation" label="Citations" value={stats.citationsGenerated} trend="+ grounded" growth="source-aware answers" description="Citation anchors available for paper Q&A." tone="amber" />
-        <ResearchStatCard icon="chat" label="Queries Asked" value={stats.queriesAsked} trend="+ sessions" growth="research chat history" description="Semantic questions asked across the corpus." tone="violet" />
+      <section className="stat-grid" aria-label="Library totals">
+        <ResearchStatCard icon="papers" label="Papers Uploaded" value={stats.papersUploaded} growth={`${stats.completed} ready for analysis`} description="PDFs imported into the research library." tone="blue" onClick={() => navigateTo(PAGES.PAPERS)} />
+        <ResearchStatCard icon="collections" label="Collections" value={stats.collectionsCreated} growth={`${stats.workspaces} workspace${stats.workspaces !== 1 ? "s" : ""}`} description="Research domains used to organize papers." tone="green" onClick={() => navigateTo(PAGES.COLLECTIONS)} />
+        <ResearchStatCard icon="book" label="Literature Reviews" value={stats.literatureReviews} growth="multi-paper reports" description="Generated reviews synthesizing multiple sources." tone="cyan" onClick={() => navigateTo(PAGES.LITERATURE_REVIEWS)} />
+        <ResearchStatCard icon="citation" label="Citations" value={stats.citationsGenerated} growth="source-aware answers" description="Citation anchors available for paper Q&A." tone="amber" />
+        <ResearchStatCard icon="chat" label="Queries Asked" value={stats.queriesAsked} growth="research chat history" description="Semantic questions asked across the corpus." tone="violet" onClick={() => navigateTo(PAGES.CHAT)} />
 
       </section>
 

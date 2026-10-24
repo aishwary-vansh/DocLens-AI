@@ -4,13 +4,14 @@ import { useAuth } from "../contexts/AuthContext";
 import { useSocket } from "../contexts/SocketContext";
 import { ActionButton, ErrorNotice, PageHeader, Panel } from "../components/research/ResearchComponents";
 import Icon from "../components/research/Icons";
+import useServiceHealth from "../hooks/useServiceHealth";
+import useTheme from "../hooks/useTheme";
 
+// Live checks: `source` picks which probe drives the row (see useServiceHealth / SocketContext).
 const SERVICES = [
-  { label: "Document Ingestion",   detail: "PDF upload, text extraction, chunking pipeline", status: "online"  },
-  { label: "Semantic Search",      detail: "pgvector vector retrieval + question answering",     status: "pending" },
-  { label: "Citation Grounding",   detail: "Source references in research chat answers",      status: "online"  },
-  { label: "Real-Time Processing", detail: "WebSocket-based pipeline status updates",         status: "online"  },
-  { label: "AI Query Service",     detail: "FastAPI + HuggingFace embedding models",          status: "offline" },
+  { label: "Application API",      detail: "Accounts, collections, uploads, chat history", source: "api" },
+  { label: "AI Research Service",  detail: "Parsing, hybrid retrieval, reranking, answers",  source: "pipeline" },
+  { label: "Real-Time Processing", detail: "Live document status updates (WebSocket)",      source: "socket" },
 ];
 
 const TECH_STACK = [
@@ -21,9 +22,12 @@ const TECH_STACK = [
 ];
 
 const SettingsPage = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const socket = useSocket();
+  const { apiOk, pipelineOk } = useServiceHealth();
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const [name, setName]                   = useState(user?.name || "");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword]           = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving]               = useState(false);
@@ -35,14 +39,18 @@ const SettingsPage = () => {
     setError("");
     setMessage("");
     if (password && password !== confirmPassword) { setError("Passwords do not match."); return; }
+    if (password && password.length < 6) { setError("Use at least 6 characters for the new password."); return; }
+    if (password && !currentPassword) { setError("Enter your current password to set a new one."); return; }
     setSaving(true);
     try {
       const payload = {};
       if (name.trim() && name.trim() !== user?.name) payload.name = name.trim();
-      if (password) payload.password = password;
+      if (password) { payload.password = password; payload.currentPassword = currentPassword; }
       if (!Object.keys(payload).length) { setMessage("No profile changes to save."); return; }
-      await authApi.updateProfile(payload);
-      setMessage("Research profile updated.");
+      const updated = await authApi.updateProfile(payload);
+      updateUser(updated);
+      setMessage(password ? "Profile and password updated." : "Profile updated.");
+      setCurrentPassword("");
       setPassword("");
       setConfirmPassword("");
     } catch (err) {
@@ -62,9 +70,9 @@ const SettingsPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Research Workspace Settings"
-        title="Configure the DocLens research environment."
-        description="Manage your profile, inspect platform service health, and review the tech stack powering semantic search and document intelligence."
+        eyebrow="Account"
+        title="Settings"
+        description="Profile, appearance, service status and session."
       />
 
       <ErrorNotice message={error} />
@@ -96,6 +104,10 @@ const SettingsPage = () => {
               />
             </div>
             <div className="form-row">
+              <label>Current Password</label>
+              <input className="field-control" type="password" autoComplete="current-password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="Needed only to change your password" />
+            </div>
+            <div className="form-row">
               <label>New Password</label>
               <input className="field-control" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Leave blank to keep current" />
             </div>
@@ -118,21 +130,43 @@ const SettingsPage = () => {
 
         {/* Right column */}
         <div style={{ display: "grid", gap: 14 }}>
+          {/* Appearance */}
+          <Panel title="Appearance" eyebrow="Theme">
+            <div className="panel-padding" style={{ display: "grid", gap: 10 }}>
+              <div className="theme-choice" role="radiogroup" aria-label="Colour theme">
+                {[["dark", "Dark"], ["light", "Light"], ["system", "System"]].map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={themePreference === value}
+                    className={themePreference === value ? "active" : ""}
+                    onClick={() => setThemePreference(value)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: 0, color: "var(--rp-text-muted)", fontSize: "0.8rem" }}>
+                Saved in this browser. "System" follows your operating system setting.
+              </p>
+            </div>
+          </Panel>
+
           {/* Platform status */}
           <Panel title="Platform Status" eyebrow="Service Health">
             {SERVICES.map(svc => {
-              const isSocket = svc.label === "Real-Time Processing";
-              const live = isSocket ? socket?.connected : svc.status === "online";
-              const cls  = svc.status === "offline" ? "offline" : svc.status === "pending" ? "pending" : "";
+              const live = svc.source === "api" ? apiOk : svc.source === "pipeline" ? pipelineOk : Boolean(socket?.connected);
+              const state = live === null ? "pending" : live ? "" : "offline";
               return (
                 <div className="platform-status-row" key={svc.label}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: "0.84rem" }}>{svc.label}</div>
                     <div style={{ color: "var(--rp-text-muted)", fontSize: "0.74rem", marginTop: 2 }}>{svc.detail}</div>
                   </div>
-                  <span className={`status-indicator ${!live && svc.status !== "pending" ? "offline" : svc.status === "pending" ? "pending" : ""}`}>
+                  <span className={`status-indicator ${state}`}>
                     <i />
-                    {isSocket ? (socket?.connected ? "Online" : "Offline") : svc.status === "online" ? "Online" : svc.status === "pending" ? "Setup needed" : "Offline"}
+                    {live === null ? "Checking…" : live ? "Online" : "Unreachable"}
                   </span>
                 </div>
               );

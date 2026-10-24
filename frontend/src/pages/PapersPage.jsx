@@ -151,9 +151,9 @@ const PapersPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Research Library"
-        title="A paper library built for intelligence work."
-        description="Upload, organise, and track papers through the research intelligence pipeline."
+        eyebrow="Library"
+        title="Papers"
+        description="Upload PDFs and track them through parsing, chunking and indexing. Only ready papers can be questioned."
         actions={(
           <>
             <SegmentedControl

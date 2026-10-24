@@ -12,6 +12,14 @@ import {
 import Icon from "../components/research/Icons";
 import { formatDate } from "../utils/researchData";
 import { useToast } from "../contexts/ToastContext";
+import ResearchGapReport from "../components/research/ResearchGapReport";
+import CitedReport from "../components/research/CitedReport";
+
+/** Fallback when a review has no stored Markdown: rebuild it from its sections. */
+function reviewMarkdownFromSections(review) {
+  const sections = Object.values(review?.sections || {});
+  return sections.map((section) => `## ${section.heading}\n\n${section.content}`).join("\n\n");
+}
 
 const LiteratureReviewsPage = () => {
   const { collections, papers } = useResearchCorpus();
@@ -27,6 +35,9 @@ const LiteratureReviewsPage = () => {
   const [generating, setGenerating] = useState(false);
   const [activeReview, setActiveReview] = useState(null);
   const [topic, setTopic] = useState("");
+  // "review" generates a stored literature review; "gaps" runs gap analysis.
+  const [mode, setMode] = useState("review");
+  const [activeGaps, setActiveGaps] = useState(null);
 
   useEffect(() => {
     loadReviews();
@@ -50,8 +61,44 @@ const LiteratureReviewsPage = () => {
     return papers.filter((p) => p.collectionId === selectedCollection && ["READY", "COMPLETED"].includes(p.status));
   }, [papers, selectedCollection]);
 
+  const minPapers = mode === "gaps" ? 1 : 2;
+
+  const openModal = (nextMode) => {
+    setMode(nextMode);
+    setActiveReview(null);
+    setActiveGaps(null);
+    setShowGenerate(true);
+  };
+
+  const resetModal = () => {
+    setShowGenerate(false);
+    setSelectedCollection("");
+    setSelectedPapers([]);
+    setTopic("");
+  };
+
+  const handleFindGaps = async () => {
+    try {
+      setGenerating(true);
+      const result = await queryApi.researchGaps({
+        documentIds: selectedPapers,
+        collectionId: selectedCollection,
+        topic: topic.trim() || undefined,
+      });
+      setActiveGaps(result);
+      resetModal();
+      toast.success(`Found ${result.gaps?.length || 0} research gaps`);
+    } catch (err) {
+      console.error("Gap analysis failed:", err);
+      toast.error(err.message || "Failed to analyse research gaps");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const handleGenerate = async () => {
-    if (!selectedCollection || selectedPapers.length < 2) return;
+    if (!selectedCollection || selectedPapers.length < minPapers) return;
+    if (mode === "gaps") return handleFindGaps();
     try {
       setGenerating(true);
       const result = await queryApi.generateLiteratureReview({
@@ -94,29 +141,34 @@ const LiteratureReviewsPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Literature Reviews"
-        title="Synthesize multi-paper insights."
-        description="Select multiple papers to generate a comprehensive literature review. DocLens reads the source documents and aggregates findings, methodologies, and limitations."
+        eyebrow="Synthesis"
+        title="Literature reviews"
+        description="Pick papers and DocLens drafts a review from their text. Every statement cites the passage it came from."
         actions={
-          <ActionButton
-            icon="plus"
-            onClick={() => {
-              setActiveReview(null);
-              setShowGenerate(true);
-            }}
-          >
-            Generate Review
-          </ActionButton>
+          <div style={{ display: "flex", gap: 8 }}>
+            <ActionButton variant="ghost" icon="search" onClick={() => openModal("gaps")}>
+              Find Research Gaps
+            </ActionButton>
+            <ActionButton icon="plus" onClick={() => openModal("review")}>
+              Generate Review
+            </ActionButton>
+          </div>
         }
       />
 
       {error && <ErrorNotice message={error} />}
 
-      {activeReview ? (
+      {activeGaps ? (
+        <ResearchGapReport analysis={activeGaps} onClose={() => setActiveGaps(null)} />
+      ) : activeReview ? (
         <div className="report-detail-layout">
           <Panel title={activeReview.title} eyebrow={formatDate(activeReview.createdAt || activeReview.date)} action={<ActionButton variant="ghost" onClick={() => setActiveReview(null)}>Close</ActionButton>}>
-            <div style={{ padding: "20px 30px", fontSize: "0.9rem", lineHeight: 1.7, color: "var(--rp-text)", whiteSpace: "pre-wrap" }}>
-              {activeReview.markdown || activeReview.content}
+            <div className="report-reader">
+              <CitedReport
+                markdown={activeReview.markdown || reviewMarkdownFromSections(activeReview) || activeReview.content || ""}
+                citations={activeReview.citations || []}
+                verification={activeReview.verification}
+              />
             </div>
           </Panel>
           <div className="report-detail-side">
@@ -208,8 +260,12 @@ const LiteratureReviewsPage = () => {
         <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowGenerate(false)}>
           <div className="modal-card" style={{ maxWidth: 600 }}>
             <header>
-              <h2>Generate Literature Review</h2>
-              <p>Select a collection and choose 2 or more papers to synthesize.</p>
+              <h2>{mode === "gaps" ? "Find Research Gaps" : "Generate Literature Review"}</h2>
+              <p>
+                {mode === "gaps"
+                  ? "Select papers to analyse. DocLens cross-checks their limitations, future work, datasets and results to surface cited research gaps."
+                  : "Select a collection and choose 2 or more papers to synthesize."}
+              </p>
             </header>
             <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "20px" }}>
               <div className="form-row">
@@ -231,7 +287,7 @@ const LiteratureReviewsPage = () => {
 
               {selectedCollection && (
                 <div className="form-row">
-                  <label>2. Select Papers (Minimum 2)</label>
+                  <label>2. Select Papers (Minimum {minPapers})</label>
                   {!collectionPapers.length ? (
                     <div style={{ padding: "12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, fontSize: "0.85rem", color: "var(--rp-text-muted)" }}>
                       No fully indexed papers found in this collection.
@@ -257,9 +313,9 @@ const LiteratureReviewsPage = () => {
                 </div>
               )}
 
-              {selectedPapers.length >= 2 && (
+              {selectedPapers.length >= minPapers && (
                 <div className="form-row">
-                  <label>3. Review Topic (Optional)</label>
+                  <label>3. {mode === "gaps" ? "Focus Topic" : "Review Topic"} (Optional)</label>
                   <input
                     type="text"
                     className="field-control"
@@ -277,9 +333,11 @@ const LiteratureReviewsPage = () => {
               <ActionButton variant="ghost" onClick={() => setShowGenerate(false)}>Cancel</ActionButton>
               <ActionButton
                 onClick={handleGenerate}
-                disabled={generating || selectedPapers.length < 2}
+                disabled={generating || selectedPapers.length < minPapers}
               >
-                {generating ? "Synthesizing..." : "Generate Review"}
+                {generating
+                  ? mode === "gaps" ? "Analysing gaps..." : "Synthesizing..."
+                  : mode === "gaps" ? "Find Gaps" : "Generate Review"}
               </ActionButton>
             </div>
           </div>

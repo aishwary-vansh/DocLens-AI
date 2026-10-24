@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ResearchGapsDto } from './dto/research-gaps.dto';
 import { QueryService } from './query.service';
 
 @ApiTags('Research Intelligence')
@@ -22,6 +23,7 @@ export class QueryController {
       sessionId?: string;
       topK?: number;
       documentIds?: string[];
+      clientRequestId?: string;
     },
     @CurrentUser() user: any,
   ) {
@@ -33,7 +35,68 @@ export class QueryController {
       body.topK,
       'vector',
       body.documentIds,
+      { clientRequestId: cleanRequestId(body.clientRequestId) },
     );
+  }
+
+  @Post('ask/stream')
+  @ApiOperation({ summary: 'Research chat with Server-Sent Events progress (stage, result, error)' })
+  async askStream(
+    @Body()
+    body: {
+      question: string;
+      collectionId: string;
+      sessionId?: string;
+      topK?: number;
+      documentIds?: string[];
+      clientRequestId?: string;
+    },
+    @CurrentUser() user: any,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // nginx must not buffer SSE
+    res.flushHeaders();
+
+    const controller = new AbortController();
+    // 'close' on the response fires when the client goes away before we finish.
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    const send = (event: string, data: unknown) => {
+      if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const keepAlive = setInterval(() => !res.writableEnded && res.write(': keep-alive\n\n'), 15_000);
+
+    send('stage', { stage: 'queued' });
+    try {
+      const result = await this.queryService.ask(
+        body.question,
+        body.collectionId,
+        user.id,
+        body.sessionId,
+        body.topK,
+        'vector',
+        body.documentIds,
+        {
+          clientRequestId: cleanRequestId(body.clientRequestId),
+          signal: controller.signal,
+          onStage: (stage) => send('stage', { stage }),
+        },
+      );
+      send('result', result);
+    } catch (err: any) {
+      if (!controller.signal.aborted) {
+        send('error', { statusCode: err?.status ?? 500, message: err?.message ?? 'The research query failed.' });
+      }
+    } finally {
+      clearInterval(keepAlive);
+      if (!res.writableEnded) res.end();
+    }
   }
 
   @Get('sessions')
@@ -145,6 +208,12 @@ export class QueryController {
     return this.queryService.generateLiteratureReview({ ...body, userId: user.id });
   }
 
+  @Post('research-gaps')
+  @ApiOperation({ summary: 'Cross-paper research gap analysis with cited evidence' })
+  researchGaps(@Body() body: ResearchGapsDto, @CurrentUser() user: any) {
+    return this.queryService.researchGaps({ ...body, userId: user.id });
+  }
+
   @Get('literature-reviews')
   @ApiOperation({ summary: 'List stored literature reviews' })
   literatureReviews(@CurrentUser() user: any, @Query('collectionId') collectionId?: string) {
@@ -218,7 +287,12 @@ export class QueryController {
 
   @Get('status/:documentId')
   @ApiOperation({ summary: 'Get processing pipeline status for a document' })
-  status(@Param('documentId') documentId: string) {
-    return this.queryService.pipelineStatus(documentId);
+  status(@Param('documentId') documentId: string, @CurrentUser() user: any) {
+    return this.queryService.pipelineStatus(documentId, user.id);
   }
+}
+
+/** Accept only short opaque ids (UUID-like) so they are safe to store and match. */
+function cleanRequestId(value?: string) {
+  return typeof value === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(value) ? value : undefined;
 }

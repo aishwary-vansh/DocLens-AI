@@ -139,6 +139,7 @@ export function buildActivityFeed({ collections = [], papers = [] }) {
     title: paper.title,
     meta: `${paper.collectionName} - ${STATUS_META[paper.status]?.label || paper.status}`,
     time: formatShortDate(paper.createdAt),
+    at: new Date(paper.createdAt || 0).getTime(),
     tone: READY_STATUSES.includes(paper.status) ? "success" : paper.status === "FAILED" ? "danger" : "info",
   }));
 
@@ -148,11 +149,13 @@ export function buildActivityFeed({ collections = [], papers = [] }) {
     title: collection.name,
     meta: collection.workspaceName || "Research workspace",
     time: formatShortDate(collection.createdAt),
+    at: new Date(collection.createdAt || 0).getTime(),
     tone: "violet",
   }));
 
+  // Newest first by real timestamp ("Oct 9" vs "Oct 22" sorted wrongly as strings).
   return [...paperItems, ...collectionItems]
-    .sort((a, b) => String(b.time).localeCompare(String(a.time)))
+    .sort((a, b) => b.at - a.at)
     .slice(0, 8);
 }
 

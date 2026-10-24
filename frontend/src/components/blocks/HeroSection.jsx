@@ -299,7 +299,7 @@ const HeroHeader = ({ onGetStarted }) => {
                                     variant="outline"
                                     size="sm"
                                     className={cn('hero-btn-outline', isScrolled && 'lg:hidden')}>
-                                    <a href="#" onClick={(e) => { e.preventDefault(); onGetStarted && onGetStarted(); }}>
+                                    <a href="#/login">
                                         <span>Login</span>
                                     </a>
                                 </Button>
@@ -307,7 +307,7 @@ const HeroHeader = ({ onGetStarted }) => {
                                     asChild
                                     size="sm"
                                     className={cn('hero-btn-primary', isScrolled && 'lg:hidden')}>
-                                    <a href="#" onClick={(e) => { e.preventDefault(); onGetStarted && onGetStarted(); }}>
+                                    <a href="#/register">
                                         <span>Sign Up</span>
                                     </a>
                                 </Button>

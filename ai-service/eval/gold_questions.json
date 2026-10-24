@@ -1,0 +1,21 @@
+{
+  "description": "Known-answer retrieval set. A chunk is relevant when it contains `gold` (whitespace-normalised). `paper` is a case-insensitive substring of the parsed title. PDFs are local uploads (backend/uploads is git-ignored), so this set only runs where those papers exist.",
+  "questions": [
+    {"id": "bert-corpus", "paper": "BERT", "question": "What corpora was BERT pre-trained on?", "gold": "BooksCorpus (800M words)"},
+    {"id": "bert-mask", "paper": "BERT", "question": "What fraction of tokens does BERT mask during pre-training?", "gold": "mask 15% of all WordPiece tokens"},
+    {"id": "bert-glue", "paper": "BERT", "question": "What GLUE score does BERT reach?", "gold": "GLUE score to 80.5%"},
+    {"id": "bert-dropout", "paper": "BERT", "question": "What dropout probability is used when pre-training BERT?", "gold": "dropout probability of 0.1"},
+    {"id": "attn-bleu", "paper": "Attention", "question": "What BLEU score does the Transformer achieve on English to German translation?", "gold": "28.4 BLEU"},
+    {"id": "attn-heads", "paper": "Attention", "question": "How many attention heads does the Transformer use?", "gold": "h = 8 parallel attention layers"},
+    {"id": "attn-optim", "paper": "Attention", "question": "Which optimizer and hyperparameters were used to train the Transformer?", "gold": "Adam optimizer [17] with"},
+    {"id": "attn-posenc", "paper": "Attention", "question": "How does the Transformer encode the position of tokens?", "gold": "sine and cosine functions of different frequencies"},
+    {"id": "attn-reg", "paper": "Attention", "question": "What regularization is applied when training the Transformer?", "gold": "three types of regularization"},
+    {"id": "gpt3-size", "paper": "Few-Shot", "question": "How many parameters does GPT-3 have?", "gold": "175 billion parameters"},
+    {"id": "gpt3-weakness", "paper": "Few-Shot", "question": "What are the weaknesses of GPT-3 long text generation?", "gold": "repeat themselves semantically"},
+    {"id": "gpt3-bidir", "paper": "Few-Shot", "question": "What limitation do the GPT-3 experiments have regarding model architectures?", "gold": "do not include any bidirectional architectures"},
+    {"id": "gpt3-humans", "paper": "Few-Shot", "question": "How was human detection of GPT-3 generated news articles measured?", "gold": "80 US-based participants"},
+    {"id": "covid-cohort", "paper": "COVID", "question": "How many participants were in the smartwatch COVID-19 cohort?", "gold": "nearly 5,300 participants"},
+    {"id": "covid-signal", "paper": "COVID", "question": "Which physiological signal detected infection before symptom onset?", "gold": "elevations in resting heart rate"},
+    {"id": "covid-limits", "paper": "COVID", "question": "What limitations does the smartwatch study acknowledge?", "gold": "Another limitation we observed"}
+  ]
+}

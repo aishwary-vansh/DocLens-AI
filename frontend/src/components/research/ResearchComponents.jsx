@@ -24,9 +24,12 @@ export function ActionButton({ children, icon = "arrowRight", variant = "primary
   );
 }
 
-export function ResearchStatCard({ icon, label, value, trend, growth, description, tone = "blue" }) {
+export function ResearchStatCard({ icon, label, value, trend, growth, description, tone = "blue", onClick }) {
+  const interactive = onClick
+    ? { role: "button", tabIndex: 0, onClick, onKeyDown: (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), onClick()) }
+    : {};
   return (
-    <article className={`research-stat-card tone-${tone}`}>
+    <article className={`research-stat-card tone-${tone} ${onClick ? "is-clickable" : ""}`} {...interactive}>
       <div className="stat-card-topline">
         <span className="stat-icon"><Icon name={icon} size={20} /></span>
         {trend && <span className="stat-trend"><Icon name="trendUp" size={13} /> {trend}</span>}
@@ -95,13 +98,14 @@ export function PaperCard({ paper, onOpen, onDelete }) {
 }
 
 export function CollectionCard({ collection, metrics, onOpen, suggested = false }) {
-  const featureList = collection.features || ["semantic search", "paper intelligence", "literature review"];
+  // Only real feature tags (suggested templates carry them); no filler labels.
+  const featureList = collection.features || [];
 
   return (
     <article className={`collection-card tone-${collection.tone || "blue"}`}>
       <div className="collection-card-top">
         <span className="collection-icon"><Icon name="collections" size={21} /></span>
-        <span className="collection-status">{suggested ? "Template" : "Research domain"}</span>
+        {suggested && <span className="collection-status">Template</span>}
       </div>
       <h3>{collection.name}</h3>
       <p>{collection.description || "A focused research collection for papers, notes, and literature reviews."}</p>
@@ -110,9 +114,11 @@ export function CollectionCard({ collection, metrics, onOpen, suggested = false 
         <span><strong>{metrics?.reviews ?? collection.reviews ?? 0}</strong> Reviews</span>
         <span><strong>{metrics?.citations ?? 0}</strong> Citations</span>
       </div>
-      <div className="concept-row">
-        {featureList.slice(0, 3).map((feature) => <span key={feature}>{feature}</span>)}
-      </div>
+      {!!featureList.length && (
+        <div className="concept-row">
+          {featureList.slice(0, 3).map((feature) => <span key={feature}>{feature}</span>)}
+        </div>
+      )}
       <button className="card-link" onClick={onOpen} disabled={suggested}>
         {suggested ? "Create to activate" : "Open collection"} <Icon name="arrowRight" size={14} />
       </button>

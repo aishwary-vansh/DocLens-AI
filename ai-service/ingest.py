@@ -2,6 +2,8 @@ import logging
 import hashlib
 import os
 import re
+import threading
+import uuid
 from pathlib import Path
 from typing import Iterable
 
@@ -19,35 +21,65 @@ MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "120"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
+# The reranker's config allows 8192 tokens; chunk pairs are ~350 tokens on
+# average (max ~670), and 512 was 1.5x faster than the default on CPU.
+RERANKER_MAX_LENGTH = int(os.getenv("RERANKER_MAX_LENGTH", "512"))
+RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").strip().lower() not in ("0", "false", "no")
 
 _model = None
 _reranker = None
+# Concurrent first requests must not each load a 2 GB model.
+_model_lock = threading.Lock()
 
 
 def get_model():
-    """Compatibility hook for the later embedding phase."""
+    """Process-wide BGE-M3 embedder, loaded once."""
     global _model
     if _model is None:
-        from sentence_transformers import SentenceTransformer
+        with _model_lock:
+            if _model is None:
+                from sentence_transformers import SentenceTransformer
 
-        _model = SentenceTransformer(EMBEDDING_MODEL)
-        dimensions = int(_model.get_sentence_embedding_dimension() or 0)
-        if dimensions != BGE_M3_DIMENSIONS:
-            raise RuntimeError(
-                f"{EMBEDDING_MODEL} produced {dimensions} dimensions; "
-                f"DocLens expects {BGE_M3_DIMENSIONS}"
-            )
+                model = SentenceTransformer(EMBEDDING_MODEL)
+                dimensions = int(model.get_sentence_embedding_dimension() or 0)
+                if dimensions != BGE_M3_DIMENSIONS:
+                    raise RuntimeError(
+                        f"{EMBEDDING_MODEL} produced {dimensions} dimensions; "
+                        f"DocLens expects {BGE_M3_DIMENSIONS}"
+                    )
+                _model = model
     return _model
 
 
 def get_reranker():
-    """Compatibility hook for the later reranking phase."""
+    """Process-wide cross-encoder, loaded once; None when RERANKER_ENABLED=false."""
     global _reranker
+    if not RERANKER_ENABLED:
+        return None
     if _reranker is None:
-        from sentence_transformers import CrossEncoder
+        with _model_lock:
+            if _reranker is None:
+                from sentence_transformers import CrossEncoder
 
-        _reranker = CrossEncoder(RERANKER_MODEL)
+                _reranker = CrossEncoder(RERANKER_MODEL, max_length=RERANKER_MAX_LENGTH)
     return _reranker
+
+
+def models_loaded() -> dict:
+    return {"embedding": _model is not None, "reranker": _reranker is not None or not RERANKER_ENABLED}
+
+
+def warm_up_models() -> None:
+    """Load both models and run one tiny inference so the first user request
+    does not pay the ~20 s load. Called from a background thread at startup."""
+    try:
+        get_model().encode("warm up", normalize_embeddings=True)
+        reranker = get_reranker()
+        if reranker is not None:
+            reranker.predict([["warm up", "warm up"]])
+        logger.info("Models warmed up: %s", models_loaded())
+    except Exception as exc:  # the service still starts; requests load lazily
+        logger.warning("Model warm-up failed: %s", exc)
 
 
 def clean_text(value: str) -> str:
@@ -255,45 +287,88 @@ def _reading_time_minutes(word_count: int) -> int:
     return max(1, round(word_count / 220))
 
 
+def _legacy_page_chunks(file_path: str, title: str) -> list[dict]:
+    """Page-level fallback for PDFs the layout parser cannot structure."""
+    chunks = _pymupdf_chunks(file_path, title)
+    for chunk in chunks:
+        chunk["id"] = str(uuid.uuid4())
+        chunk["metadata"].setdefault("section_type", "other")
+    return chunks
+
+
 def ingest_document(document_id: str, file_path: str, collection_id: str):
     """
-    Parse a PDF into persistent Phase 1 evidence chunks.
+    Parse a research PDF into structured, section-typed evidence chunks.
+
+    Pipeline: layout parse (sections, abstract, references, captions, tables)
+    → section-aware chunks with contextual headers → paper profile (map step)
+    → persist chunks + profile chunk. Embedding happens in /embed.
     """
+    from rag.chunking import build_chunks, finalise_chunks, reconcile_chunk_ids
+    from rag.paper_profile import build_profile, profile_chunk
+    from rag.pdf_parser import parse_paper
+
     if not os.path.exists(file_path):
         return {"status": "failed", "message": f"File not found: {file_path}"}
 
     existing_title = pg_store.get_document_title(document_id)
     pdf_meta = _pdf_metadata(file_path)
-    title = _best_title(existing_title, pdf_meta, file_path)
 
-    chunks = _pymupdf_chunks(file_path, title)
-    extractor = "pymupdf"
+    paper = None
+    try:
+        paper = parse_paper(file_path)
+    except Exception as exc:
+        logger.warning("Layout parser failed for %s, using page fallback: %s", document_id, exc)
+
+    detected_title = paper.title if paper else ""
+    title = _best_title(existing_title, {"title": detected_title or pdf_meta.get("title")}, file_path)
+
+    chunks: list[dict] = build_chunks(paper, title) if paper else []
+    extractor = paper.parser if paper else "pymupdf"
+    body_chunks = [c for c in chunks if c["metadata"].get("content_type") not in {"reference", "front_matter"}]
+    if len(body_chunks) < 2:
+        # Scanned or unusual layouts: keep whatever structure we found, add page text.
+        chunks = _legacy_page_chunks(file_path, title) + [c for c in chunks if c["metadata"].get("content_type") == "reference"]
+        extractor = "pymupdf"
 
     if not chunks:
         return {"status": "failed", "message": "No extractable text found in PDF"}
 
-    for index, chunk in enumerate(chunks):
-        chunk["chunkIndex"] = index
-        chunk["contentHash"] = hashlib.sha256(chunk["content"].encode("utf-8")).hexdigest()
-        chunk["metadata"] = {
-            **chunk.get("metadata", {}),
-            "paper_id": document_id,
-            "collection_id": collection_id,
-            "chunk_index": index,
-        }
+    # Hash first, then adopt stored ids for unchanged text (keeps citations and
+    # vectors across re-index) before the profile records any chunk ids.
+    finalise_chunks(chunks, document_id, collection_id)
+    reuse = reconcile_chunk_ids(chunks, pg_store.get_chunk_fingerprints(document_id), EMBEDDING_MODEL)
 
-    pg_store.insert_ingestion_chunks(chunks, document_id)
+    profile, profile_method = build_profile(title, chunks, paper.abstract if paper else "")
+    card = profile_chunk(title, profile)
+    if card:
+        chunks.append(card)
 
-    words = _word_count(chunks)
+    finalise_chunks(chunks, document_id, collection_id)
+    persisted = pg_store.insert_ingestion_chunks(chunks, document_id)
+    logger.info("Ingest %s: reuse=%s persisted=%s", document_id, reuse, persisted)
+
+    words = _word_count(c for c in chunks if c["metadata"].get("content_type") != "paper_profile")
+    evidence_types = sorted({chunk["metadata"]["content_type"] for chunk in chunks})
+    authors = (paper.authors if paper else []) or pdf_meta.get("authors", [])
     ingest_metadata = {
         "title": title,
-        "authors": pdf_meta.get("authors", []),
+        "authors": authors,
         "page_count": pdf_meta.get("page_count"),
         "wordCount": words,
         "readingTimeMinutes": _reading_time_minutes(words),
         "extractor": extractor,
         "chunkCount": len(chunks),
-        "evidenceTypes": sorted({chunk["metadata"]["content_type"] for chunk in chunks}),
+        "evidenceTypes": evidence_types,
+        "abstract": (paper.abstract[:3000] if paper else ""),
+        "outline": [
+            {"heading": s.heading, "type": s.section_type, "level": s.level, "page": s.page_start}
+            for s in (paper.sections if paper else [])
+            if s.section_type != "front_matter"
+        ],
+        "referenceCount": len(paper.references) if paper else 0,
+        "profile": profile.model_dump(),
+        "profileMethod": profile_method,
         "vectorStore": "pending-embedding",
     }
     pg_store.update_document_ingest_metadata(document_id, ingest_metadata)
@@ -302,12 +377,15 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
         "status": "completed",
         "chunks_processed": len(chunks),
         "title": title,
-        "authors": pdf_meta.get("authors", []),
+        "authors": authors,
         "page_count": pdf_meta.get("page_count"),
         "word_count": words,
         "reading_time_minutes": _reading_time_minutes(words),
         "extractor": extractor,
-        "evidence_types": sorted({chunk["metadata"]["content_type"] for chunk in chunks}),
+        "evidence_types": evidence_types,
+        "sections": [s.section_type for s in paper.sections] if paper else [],
+        "reference_count": ingest_metadata["referenceCount"],
+        "profile_method": profile_method,
         "vector_store": "postgresql",
         "embedding_status": "pending",
     }

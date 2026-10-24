@@ -82,6 +82,24 @@ class StructuredAnswer(BaseModel):
         None,
         description="The rewritten query, if query_was_rewritten=True"
     )
+    uncited_sentences: int = Field(
+        0,
+        description="Answer sentences with factual content but no evidence marker (set by the server)"
+    )
+    evidence_conflict: bool = Field(
+        False,
+        description="The cited evidence disagrees (different numbers or opposite conclusions)"
+    )
+    background: Optional[str] = Field(
+        None,
+        description="General-knowledge context from the model, NOT from the papers; shown separately and never cited"
+    )
+    abstain_reason: Optional[str] = Field(
+        None,
+        description="Why the pipeline abstained before generation: no_chunks or low_relevance"
+    )
+    top_similarity: Optional[float] = Field(None, description="Best BGE-M3 cosine among retrieved chunks")
+    top_rerank: Optional[float] = Field(None, description="Best cross-encoder score, when the reranker ran")
 
 
 # ── Paper comparison ──────────────────────────────────────────────────────────
@@ -162,3 +180,143 @@ class KGExtractionResult(BaseModel):
     document_id: str
     entities: List[KGEntity] = Field(default_factory=list)
     relationships: List[KGRelationship] = Field(default_factory=list)
+
+
+# ── Paper profile (per-paper structured extraction, built at ingest) ─────────
+
+class EvidencedPoint(BaseModel):
+    """One extracted fact about a paper, tied to the chunk it came from."""
+    text: str = Field(description="Concise statement of the fact, in your own words")
+    evidence_number: Optional[int] = Field(None, description="N of the [Evidence N] block that supports it")
+    quote: Optional[str] = Field(None, description="Short verbatim excerpt (<= 30 words) from that evidence block")
+    chunk_id: Optional[str] = Field(None, description="Set by the server; leave empty")
+    page_number: Optional[int] = None
+    grounded: bool = Field(False, description="Set by the server after validation; leave false")
+
+
+class PaperProfile(BaseModel):
+    """Structured research card for one paper. Each list item cites evidence."""
+    research_problem: str = Field("", description="The problem or question the paper addresses (1-2 sentences)")
+    paper_type: str = Field(
+        "empirical",
+        description="One of: empirical, method, system, theoretical, survey, dataset, position, case_study",
+    )
+    domain: str = Field("", description="Research field / application domain")
+    contributions: List[EvidencedPoint] = Field(default_factory=list)
+    methods: List[EvidencedPoint] = Field(default_factory=list, description="Methods, models, algorithms used or proposed")
+    datasets: List[EvidencedPoint] = Field(default_factory=list, description="Datasets, corpora, cohorts, benchmarks")
+    metrics: List[EvidencedPoint] = Field(default_factory=list, description="Evaluation metrics")
+    key_results: List[EvidencedPoint] = Field(default_factory=list, description="Main quantitative/qualitative findings")
+    baselines: List[EvidencedPoint] = Field(default_factory=list, description="Methods compared against")
+    limitations: List[EvidencedPoint] = Field(default_factory=list, description="Limitations stated by the authors")
+    assumptions: List[EvidencedPoint] = Field(default_factory=list, description="Explicit or clearly implied assumptions")
+    future_work: List[EvidencedPoint] = Field(default_factory=list, description="Future work / open problems stated by the authors")
+    keywords: List[str] = Field(default_factory=list)
+
+
+# ── Research gap analysis ─────────────────────────────────────────────────────
+
+class ResearchGap(BaseModel):
+    title: str = Field(description="Short name of the gap")
+    gap_type: str = Field(
+        description="One of: methodological, empirical, dataset, evaluation, theoretical, "
+                    "population, application, reproducibility, contradiction"
+    )
+    description: str = Field(description="What is missing or unresolved across the papers")
+    rationale: str = Field(description="Why the evidence implies this gap (cite papers)")
+    evidence_numbers: List[int] = Field(default_factory=list, description="N of each [Evidence N] block that motivates the gap")
+    evidence: List[CitationRef] = Field(default_factory=list, description="Set by the server; leave empty")
+    related_document_ids: List[str] = Field(default_factory=list, description="Set by the server; leave empty")
+    suggested_research_questions: List[str] = Field(default_factory=list)
+    suggested_approach: str = Field("", description="A concrete study design that could close the gap")
+    confidence: float = Field(0.5, ge=0.0, le=1.0)
+    grounded: bool = Field(False, description="Set by the server after validation; leave false")
+
+
+class ContradictionPosition(BaseModel):
+    paper_title: str
+    stance: str
+    evidence_number: Optional[int] = Field(None, description="N of the [Evidence N] block stating this stance")
+    document_id: Optional[str] = Field(None, description="Set by the server; leave empty")
+    citation: Optional[CitationRef] = Field(None, description="Set by the server; leave empty")
+
+
+class Contradiction(BaseModel):
+    topic: str
+    positions: List[ContradictionPosition] = Field(default_factory=list)
+    possible_explanation: str = ""
+
+
+class ResearchGapResult(BaseModel):
+    summary: str = Field(description="2-4 sentence overview of the research landscape and its main gaps")
+    consensus: List[str] = Field(default_factory=list, description="Points most papers agree on")
+    contradictions: List[Contradiction] = Field(default_factory=list)
+    gaps: List[ResearchGap] = Field(default_factory=list)
+    insufficient_evidence: bool = False
+
+
+# ── Literature review draft (list-based, safe for native structured output) ──
+
+class ReviewSectionDraft(BaseModel):
+    key: str = Field(
+        description="One of: introduction, existingApproaches, commonMethodologies, keyFindings, "
+                    "limitations, researchGaps, futureDirections"
+    )
+    heading: str
+    content: str = Field(description="Synthesised prose. Cite inline as [Evidence N].")
+    evidence_numbers: List[int] = Field(default_factory=list, description="Evidence block numbers cited in content")
+
+
+class PaperMatrixRow(BaseModel):
+    document_id: str = ""
+    title: str
+    problem: str = ""
+    method: str = ""
+    datasets: str = ""
+    metrics: str = ""
+    key_result: str = ""
+    limitation: str = ""
+
+
+class LiteratureReviewDraft(BaseModel):
+    title: str
+    sections: List[ReviewSectionDraft] = Field(default_factory=list)
+    themes: List[str] = Field(default_factory=list, description="Cross-paper themes found")
+    insufficient_evidence: bool = False
+
+
+class ComparisonDraft(BaseModel):
+    narrative: str = Field(description="Comparative narrative. Cite inline as [Evidence N].")
+    methods: List[str] = Field(default_factory=list, description="'<paper title>: <method>' per paper")
+    datasets: List[str] = Field(default_factory=list, description="'<paper title>: <datasets>' per paper")
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses: List[str] = Field(default_factory=list)
+    findings: List[str] = Field(default_factory=list)
+    future_work: List[str] = Field(default_factory=list)
+    agreements: List[str] = Field(default_factory=list, description="Where the papers agree")
+    disagreements: List[str] = Field(default_factory=list, description="Where the papers conflict")
+    evidence_numbers: List[int] = Field(default_factory=list)
+    insufficient_evidence: bool = False
+
+
+# ── Q&A draft (LLM cites evidence numbers; server builds CitationRefs) ───────
+
+class ClaimDraft(BaseModel):
+    claim_text: str
+    evidence_numbers: List[int] = Field(default_factory=list, description="N of each [Evidence N] block supporting the claim")
+
+
+class AnswerDraft(BaseModel):
+    answer: str = Field(description="Grounded answer. Cite inline as [Evidence N].")
+    claims: List[ClaimDraft] = Field(default_factory=list, description="Each factual claim in the answer")
+    insufficient_evidence: bool = False
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    evidence_conflict: bool = Field(False, description="True when evidence blocks disagree on the answer")
+    background: str = Field("", description="Optional general-knowledge context, only for general/conceptual "
+                                            "questions. Never paper-specific facts. No [Evidence N] markers.")
+
+
+class BackgroundDraft(BaseModel):
+    """Used when the papers hold no relevant evidence at all."""
+    is_general: bool = Field(description="True only for general-knowledge questions not about the user's papers")
+    background: str = Field("", description="Short general-knowledge answer when is_general, else empty")

@@ -62,18 +62,18 @@ const CollectionsPage = () => {
   return (
     <>
       <PageHeader
-        eyebrow="Research Domains"
-        title="Collections should feel like active research fields."
-        description="Group papers by topic and open each collection as a domain-specific intelligence workspace."
+        eyebrow="Library"
+        title="Collections"
+        description="Group papers by topic. Questions, reviews and comparisons are scoped to a collection."
         actions={<ActionButton icon="plus" onClick={openCreate}>Create Collection</ActionButton>}
       />
 
       <ErrorNotice message={error && "Collection data could not be loaded from the API. The page is using graceful onboarding states."} />
 
       <section className="analytics-grid">
-        <ResearchStatCard icon="collections" label="Collections" value={stats.collectionsCreated} trend="domains" growth={`${stats.workspaces} workspaces`} description="Active research domains in DocLens." tone="green" />
-        <ResearchStatCard icon="papers" label="Papers" value={stats.papersUploaded} trend="library" growth={`${stats.completed} indexed`} description="Papers distributed across collections." tone="blue" />
-        <ResearchStatCard icon="book" label="Literature Reviews" value={stats.literatureReviews} trend="synthesis" growth="multi-paper reports" description="Generated reviews for this domain." tone="cyan" />
+        <ResearchStatCard icon="collections" label="Collections" value={stats.collectionsCreated} growth={`${stats.workspaces} workspaces`} description="Active research domains in DocLens." tone="green" />
+        <ResearchStatCard icon="papers" label="Papers" value={stats.papersUploaded} growth={`${stats.completed} indexed`} description="Papers distributed across collections." tone="blue" />
+        <ResearchStatCard icon="book" label="Literature Reviews" value={stats.literatureReviews} growth="multi-paper reports" description="Generated reviews for this domain." tone="cyan" />
       </section>
 
       <Panel title={collections.length ? "Research Collections" : "Suggested Research Domains"} eyebrow="Domains">

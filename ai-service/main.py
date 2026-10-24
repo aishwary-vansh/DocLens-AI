@@ -1,13 +1,17 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
 import os
+import json
 import math
+import queue
+import threading
 import time
 
 import ingest
+import internal_auth
 import query
 
 # Configure logging
@@ -19,13 +23,16 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DocLens AI Service", version="2.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS: browsers never call this service directly. Only the NestJS backend
+# (which enforces per-user ownership) may, authenticated by a shared secret.
+internal_auth.log_startup_mode()
+
+
+@app.middleware("http")
+async def require_internal_secret(request: Request, call_next):
+    if not internal_auth.is_authorised(request.url.path, request.headers.get(internal_auth.HEADER)):
+        return JSONResponse(status_code=401, content={"detail": "Missing or invalid internal API secret"})
+    return await call_next(request)
 
 # --- Request Models ---
 
@@ -71,6 +78,12 @@ class CompareRequest(BaseModel):
     question: Optional[str] = None
     topK: int = 12
 
+class ResearchGapsRequest(BaseModel):
+    collectionId: Optional[str] = None
+    documentIds: Optional[List[str]] = None
+    topic: Optional[str] = None
+    maxGaps: int = 8
+
 class KGQueryRequest(BaseModel):
     collectionId: str
     entityType: Optional[str] = None
@@ -87,10 +100,18 @@ class EvaluateRequest(BaseModel):
 
 # --- Endpoints ---
 
+@app.on_event("startup")
+def warm_up_models():
+    # Load BGE-M3 and the reranker in the background so /health answers at
+    # once and the first question does not pay the ~20 s model load.
+    if os.getenv("MODEL_WARMUP", "true").strip().lower() not in ("0", "false", "no"):
+        threading.Thread(target=ingest.warm_up_models, name="model-warmup", daemon=True).start()
+
+
 @app.get("/health")
 def health():
     """Health check — used by Docker Compose and nginx."""
-    return {"status": "ok", "message": "DocLens AI Service v2.0 is healthy"}
+    return {"status": "ok", "message": "DocLens AI Service v2.0 is healthy", "models_loaded": ingest.models_loaded()}
 
 
 @app.post("/ingest")
@@ -99,6 +120,8 @@ def process_document(req: IngestRequest):
     Phase 1 ingestion: parse → represent evidence → persist chunk metadata.
     Embedding and retrieval are intentionally deferred to later phases.
     """
+    if not internal_auth.ingest_path_allowed(req.filePath):
+        raise HTTPException(status_code=400, detail="filePath is outside the allowed upload directory")
     try:
         res = ingest.ingest_document(req.documentId, req.filePath, req.collectionId)
         logger.info("Ingestion complete for document %s: %s", req.documentId, res)
@@ -128,23 +151,9 @@ def get_processing_status(document_id: str):
 @app.post("/search")
 @app.post("/search/chunk")
 def search(req: SearchRequest):
-    """Hybrid RRF search with BGE reranking."""
+    """Routed hybrid search (BGE-M3 + keyword → RRF → BGE rerank + section boost)."""
     try:
-        from vector_store.pg_store import pg_store
-        from ingest import get_model, get_reranker
-        model = get_model()
-        q_emb = model.encode(req.query, normalize_embeddings=True).tolist()
-        chunks = pg_store.search(req.query, q_emb, req.collectionId, req.documentIds, top_k=40)
-
-        if chunks:
-            reranker = get_reranker()
-            pairs = [[req.query, c["content"]] for c in chunks]
-            scores = reranker.predict(pairs)
-            for i, chunk in enumerate(chunks):
-                chunk["score"] = _sigmoid_score(float(scores[i]))
-            chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:req.topK]
-
-        return chunks
+        return query._retrieve_and_rerank(req.query, req.collectionId, req.documentIds, req.topK)
     except Exception as e:
         logger.error("Search failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -193,6 +202,60 @@ def ask(req: AskRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class _Cancelled(Exception):
+    pass
+
+
+def _sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/ask/stream")
+def ask_stream(req: AskRequest):
+    """Same answer as /ask, delivered as Server-Sent Events:
+    `stage` events while the pipeline runs, then one `result` or `error`.
+    The answer itself is not token-streamed: it is structured JSON whose
+    citations are resolved and verified before anything is shown.
+    If the client disconnects, the pipeline stops at the next stage boundary."""
+    events: "queue.Queue[tuple[str, object]]" = queue.Queue()
+    cancelled = threading.Event()
+
+    def on_stage(name: str) -> None:
+        if cancelled.is_set():
+            raise _Cancelled()
+        events.put(("stage", {"stage": name}))
+
+    def work() -> None:
+        try:
+            result = query.ask_question(req.question, req.collectionId, req.documentIds, req.topK, req.history, on_stage=on_stage)
+            events.put(("result", result))
+        except _Cancelled:
+            logger.info("ask/stream cancelled by client")
+        except Exception as e:  # reported to the client as an error event
+            logger.error("Ask (stream) failed: %s", e)
+            events.put(("error", {"detail": str(e)}))
+        finally:
+            events.put(("end", None))
+
+    def stream():
+        threading.Thread(target=work, name="ask-stream", daemon=True).start()
+        try:
+            while True:
+                try:
+                    kind, data = events.get(timeout=10)
+                except queue.Empty:
+                    yield ": keep-alive\n\n"  # comment frame keeps proxies from idling out
+                    continue
+                if kind == "end":
+                    return
+                yield _sse(kind, data)
+        finally:
+            cancelled.set()  # client gone or stream finished
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post("/summarise")
 def summarise(req: DocumentRequest):
     try:
@@ -222,6 +285,18 @@ def compare_documents(req: CompareRequest):
     try:
         return query.compare_documents(req.documentIds, req.collectionId, req.question, req.topK)
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/research-gaps")
+def research_gaps(req: ResearchGapsRequest):
+    """Cross-paper research-gap analysis with cited evidence."""
+    if not req.collectionId and not req.documentIds:
+        raise HTTPException(status_code=400, detail="collectionId or documentIds is required")
+    try:
+        return query.research_gaps(req.collectionId, req.documentIds, req.topic, req.maxGaps)
+    except Exception as e:
+        logger.error("Research gap analysis failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -284,13 +359,10 @@ def evaluate(req: EvaluateRequest):
             req.topK,
         )
 
-        # Fetch the retrieved chunks for metrics
-        from vector_store.pg_store import pg_store
-        from ingest import get_model
-        model = get_model()
-        q_emb = model.encode(req.question, normalize_embeddings=True).tolist()
-        retrieved_chunks = pg_store.search(
-            req.question, q_emb, req.collectionId, req.documentIds, top_k=req.topK
+        # Retrieved chunks for metrics: the same retriever and merge as /ask.
+        from rag.chain import production_retriever, retrieve_merged
+        retrieved_chunks = retrieve_merged(
+            production_retriever(req.collectionId, req.documentIds, req.topK), req.question
         )
 
         # Reconstruct StructuredAnswer from the result dict

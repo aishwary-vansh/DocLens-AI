@@ -1,64 +1,64 @@
 # ai-service/rag/chain.py
 # ─────────────────────────────────────────────────────────────────────────────
-# Full LangChain RAG pipeline for DocLens.
+# Conversational research Q&A.
 #
 # Pipeline:
 #   question
 #   → conditional query rewriting (only if history is non-empty)
-#   → DocLensRetriever (existing RRF SQL, unchanged)
-#   → BGE reranking (inside retriever)
-#   → evidence selection
-#   → Gemini (structured output via Pydantic)
-#   → claim verification
-#   → citation validation
+#   → query routing (section boosts, reference filtering)
+#   → multi-query hybrid retrieval (BGE-M3 + OR keyword) → RRF → BGE rerank
+#   → relevance floor: no relevant chunk → abstain (optional labelled background
+#     for general-knowledge questions, never cited)
+#   → numbered evidence pack
+#   → Gemini structured output (claims cite [Evidence N])
+#   → server-side citation resolution + claim verification
 #   → StructuredAnswer
+#
+# Multi-paper synthesis (compare / literature review / gaps) is in
+# rag/synthesis.py.
 # ─────────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
 
 import logging
 import os
 import re
-from typing import List, Optional, Dict, Any
+import time
+from typing import Callable, Dict, List, Optional
 
-from langchain_core.documents import Document as LCDocument
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables import RunnableBranch, RunnableLambda, RunnablePassthrough
-from langchain_google_genai import ChatGoogleGenerativeAI
 
-from .schemas import (
-    CitationRef,
-    Claim,
-    StructuredAnswer,
-    PaperComparisonResult,
-    LiteratureReviewResult,
-    LiteratureReviewSection,
-)
-from .retriever import DocLensRetriever
-from .verification import verify_claims, validate_citations, unsupported_claim_rate
+from .evidence import EvidencePack, renumber_markers
+from .llm import get_llm, invoke_structured, message_text
+from .query_router import route_query
+from .retriever import DocLensRetriever, top_scores
+from .schemas import AnswerDraft, BackgroundDraft, Claim, StructuredAnswer
+from .verification import check_claim, is_content_sentence, unsupported_claim_rate
 
 logger = logging.getLogger(__name__)
 
-# Default model — can be overridden via LLM_MODEL env var
-DEFAULT_MODEL = "gemini-1.5-flash"
+# No-relevant-evidence floor (eval/abstention_calibration.py, 2026-10-24, 12 local
+# PDFs): every answerable gold/validation question had a top BGE-M3 cosine
+# >= 0.55 and every off-topic question <= 0.44. Questions about the papers whose
+# answer is absent overlap the answerable range (0.53-0.66), so this floor only
+# catches off-topic questions; the prompt rules and claim checks handle the rest.
+RETRIEVAL_MIN_SIMILARITY = float(os.getenv("RETRIEVAL_MIN_SIMILARITY", "0.48") or 0)
+# Same idea for the cross-encoder score when the reranker runs; 0 disables it.
+RETRIEVAL_MIN_RERANK = float(os.getenv("RETRIEVAL_MIN_RERANK", "0") or 0)
+
+NO_EVIDENCE_ANSWER = (
+    "Your uploaded papers do not contain passages relevant to this question, so DocLens cannot "
+    "answer it from your sources. Check that the right papers are in scope and fully processed."
+)
 
 
-def _get_llm() -> ChatGoogleGenerativeAI:
-    """Lazily create the Gemini LLM. Fails loudly if API key is missing."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is not set. Set it in your .env file or environment."
-        )
-    model = os.getenv("LLM_MODEL", DEFAULT_MODEL)
-    # Normalise model name: strip any "google/" prefix or ":free" suffix
-    model = model.replace("google/", "").replace(":free", "")
-    return ChatGoogleGenerativeAI(
-        model=model,
-        google_api_key=api_key,
-        temperature=0.1,  # Low temperature for factual research answers
-    )
+def below_relevance_floor(scores: dict) -> bool:
+    """True when the best retrieved chunk is too dissimilar to be evidence.
+    A missing score (keyword-only hits, reranker off) never triggers abstention."""
+    sim, rerank = scores.get("top_similarity"), scores.get("top_rerank")
+    if RETRIEVAL_MIN_SIMILARITY and sim is not None and sim < RETRIEVAL_MIN_SIMILARITY:
+        return True
+    return bool(RETRIEVAL_MIN_RERANK and rerank is not None and rerank < RETRIEVAL_MIN_RERANK)
 
 
 def _format_history(history: List[Dict[str, str]]) -> List[HumanMessage | AIMessage]:
@@ -74,85 +74,73 @@ def _format_history(history: List[Dict[str, str]]) -> List[HumanMessage | AIMess
     return messages
 
 
-def _chunks_to_context(docs: List[LCDocument]) -> str:
-    """Format retrieved chunks into a numbered evidence context block."""
-    if not docs:
-        return "(No evidence retrieved)"
-    parts = []
-    for i, doc in enumerate(docs, 1):
-        meta = doc.metadata
-        parts.append(
-            f"[Evidence {i}]\n"
-            f"chunk_id: {meta.get('chunk_id', 'unknown')}\n"
-            f"document_id: {meta.get('document_id', 'unknown')}\n"
-            f"document_title: {meta.get('document_title', 'Unknown document')}\n"
-            f"page: {meta.get('page_number', 'N/A')}\n"
-            f"evidence_type: {meta.get('content_type', 'page_text')}\n"
-            f"section: {meta.get('section', 'N/A')}\n"
-            f"---\n{doc.page_content}\n"
-        )
-    return "\n".join(parts)
+def _history_text(history: List[Dict[str, str]], limit: int = 6) -> str:
+    return "\n".join(f"{h.get('role', 'user')}: {h.get('content', '')[:800]}" for h in (history or [])[-limit:])
 
 
-def _docs_to_raw_chunks(docs: List[LCDocument]) -> list:
-    """Convert LangChain Documents back to the raw-chunk format used by pg_store."""
-    return [
-        {
-            "id":          doc.metadata.get("chunk_id", ""),
-            "documentId":  doc.metadata.get("document_id", ""),
-            "documentTitle": doc.metadata.get("document_title", ""),
-            "content":     doc.page_content,
-            "pageNumber":  doc.metadata.get("page_number"),
-            "chunkIndex":  doc.metadata.get("chunk_index"),
-            "contentType":  doc.metadata.get("content_type", "page_text"),
-            "section":      doc.metadata.get("section", ""),
-            "score":       doc.metadata.get("score", 0.0),
-        }
-        for doc in docs
+def split_facets(question: str) -> List[str]:
+    """Split compound research questions into bounded facets without a model call."""
+    facets = [
+        part.strip()
+        for part in re.split(r"\s+(?:and|also|while|versus|vs\.?)\s+|[?;]", question, flags=re.IGNORECASE)
+        if len(part.strip().split()) >= 3
     ]
+    return list(dict.fromkeys([question, *facets[:3]]))
 
 
-# ── Answer parsing ────────────────────────────────────────────────────────────
+def production_retriever(
+    collection_id: Optional[str], document_ids: Optional[List[str]], top_k: int
+) -> DocLensRetriever:
+    """The retriever /ask uses. /evaluate builds the same one so metrics match production."""
+    # Cap chunks per paper so a multi-paper question sees more than one paper.
+    max_per_doc = None if document_ids and len(document_ids) == 1 else max(3, top_k // 2)
+    return DocLensRetriever.create(
+        collection_id=collection_id,
+        document_ids=document_ids,
+        top_k=top_k,
+        max_per_document=max_per_doc,
+    )
 
-_ANSWER_SYSTEM = """You are DocLens AI, a rigorous research assistant.
 
-Your task is to answer the user's question STRICTLY based on the provided evidence.
+def retrieve_merged(retriever: DocLensRetriever, question: str) -> List[dict]:
+    """Multi-query retrieval over the question and its facets."""
+    # Facet candidates are fused by RRF and reranked once against the full
+    # question: one cross-encoder pass instead of one per facet.
+    return retriever.retrieve_multi(split_facets(question), question, route_query(question), max(retriever.top_k, 10))
 
+
+_ANSWER_SYSTEM = """You are DocLens AI, a rigorous research assistant. Answer STRICTLY from the evidence blocks.
 RULES:
-1. Every factual claim MUST be supported by at least one [Evidence N] block.
-2. If the evidence is insufficient, set insufficient_evidence=true and explain what is missing.
-3. NEVER fabricate citations, source text, or chunk_ids.
-4. Use the exact chunk_id and document_id values from the evidence blocks.
-5. source_text must be a near-verbatim excerpt (not paraphrase) from the evidence.
-6. Citations should point only to evidence that directly supports the specific claim.
-7. Be precise and academic in tone.
-8. For evidence_type=table, preserve the table's labels and values.
-9. For evidence_type=figure_or_table, distinguish visible observations from
-   author-reported conclusions and explicitly say when a value is not legible.
+1. Cite every factual sentence inline as [Evidence N] (several: [Evidence 2, 5]).
+2. List each factual claim in `claims` with the evidence_numbers that directly support it.
+3. If the evidence is insufficient, set insufficient_evidence=true and say what is missing. Never guess.
+4. Keep numbers, metric names, dataset names and units exactly as written in the evidence.
+5. When several papers are involved, attribute statements to papers by title and contrast them.
+6. type=table blocks: preserve labels and values. type=profile blocks are structured paper summaries;
+   prefer citing the original section blocks when both say the same thing.
+7. If evidence blocks disagree (different numbers, opposite conclusions), say so explicitly, cite each
+   side, do not silently pick one, and set evidence_conflict=true.
+8. confidence reflects how directly the evidence answers the question (0-1).
+9. `answer` contains ONLY what the evidence says. Never add facts, results, numbers or citations from memory.
+10. `background` is optional and usually empty. Fill it (at most 3 sentences) only when the question asks
+    about a general concept (e.g. a definition) that the evidence assumes but does not explain. It is general
+    knowledge, NOT from the papers: never put paper-specific results, numbers or [Evidence N] markers in it,
+    and never use it to answer a question about what the papers report."""
 
-OUTPUT FORMAT: You must respond with valid JSON matching this schema exactly:
-{format_instructions}"""
-
-_ANSWER_HUMAN = """Evidence:
-{context}
-
-Question: {question}
-
-Respond with a JSON object matching the schema."""
-
-
-def _build_answer_chain(llm: ChatGoogleGenerativeAI):
-    parser = PydanticOutputParser(pydantic_object=StructuredAnswer)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", _ANSWER_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        MessagesPlaceholder(variable_name="history", optional=True),
-        ("human", _ANSWER_HUMAN),
-    ])
-    # We use a plain prompt + LLM + parser chain
-    return prompt | llm | parser
+_BACKGROUND_SYSTEM = """The user's uploaded research papers contain no passage relevant to their question.
+Decide whether the question is a general-knowledge question (a definition, concept or widely known fact that
+is not about the user's specific papers). If it is, set is_general=true and answer it in at most 4 sentences
+from general knowledge. If it asks about the user's papers, their results, or anything you would have to
+guess, set is_general=false and leave background empty. Never invent citations, studies or numbers."""
 
 
-def _build_query_rewrite_chain(llm: ChatGoogleGenerativeAI):
+def clean_background(text: Optional[str]) -> Optional[str]:
+    """Background text is never cited: drop any evidence markers the model added."""
+    text = re.sub(r"\s*\[(?:Evidence|Source)[^\]]*\]", "", text or "").strip()
+    return text or None
+
+
+def _build_query_rewrite_chain(llm):
     """Rewrite a question in the context of conversation history."""
     rewrite_prompt = ChatPromptTemplate.from_messages([
         ("system", (
@@ -164,14 +152,12 @@ def _build_query_rewrite_chain(llm: ChatGoogleGenerativeAI):
         MessagesPlaceholder(variable_name="history"),
         ("human", "Follow-up question: {question}\n\nRewritten standalone question:"),
     ])
-    return rewrite_prompt | llm | (lambda msg: msg.content.strip())
+    return rewrite_prompt | llm | (lambda msg: message_text(msg).strip())
 
-
-# ── Main pipeline class ───────────────────────────────────────────────────────
 
 class DocLensRAGChain:
     """
-    Full DocLens RAG pipeline using LangChain.
+    Full DocLens RAG pipeline for conversational Q&A.
 
     Usage:
         chain = DocLensRAGChain.create(collection_id="...", top_k=10)
@@ -181,11 +167,12 @@ class DocLensRAGChain:
         )
     """
 
-    def __init__(self, retriever: DocLensRetriever, llm: ChatGoogleGenerativeAI):
+    def __init__(self, retriever: DocLensRetriever, llm):
         self._retriever = retriever
         self._llm = llm
-        self._answer_chain = _build_answer_chain(llm)
         self._rewrite_chain = _build_query_rewrite_chain(llm)
+        # Wall-clock milliseconds per stage of the last invoke(), for logs and /ask.
+        self.last_timings: Dict[str, int] = {}
 
     @classmethod
     def create(
@@ -194,268 +181,194 @@ class DocLensRAGChain:
         document_ids: Optional[List[str]] = None,
         top_k: int = 10,
     ) -> "DocLensRAGChain":
-        retriever = DocLensRetriever.create(
-            collection_id=collection_id,
-            document_ids=document_ids,
-            top_k=top_k,
-        )
-        llm = _get_llm()
-        return cls(retriever, llm)
+        return cls(production_retriever(collection_id, document_ids, top_k), get_llm())
+
+    def _retrieve(self, question: str) -> List[dict]:
+        return retrieve_merged(self._retriever, question)
+
+    def _background(self, question: str) -> Optional[str]:
+        """Labelled general-knowledge context for a general question the papers
+        do not cover. Any failure means no background, never an error."""
+        try:
+            draft = invoke_structured(BackgroundDraft, _BACKGROUND_SYSTEM, f"Question: {question}", llm=self._llm)
+        except Exception as exc:
+            logger.info("Background answer skipped: %s", exc)
+            return None
+        return clean_background(draft.background) if draft.is_general else None
 
     def invoke(
         self,
         question: str,
         history: Optional[List[Dict[str, str]]] = None,
+        on_stage: Optional[Callable[[str], None]] = None,
     ) -> StructuredAnswer:
-        """
-        Run the full RAG pipeline.
-
-        Returns StructuredAnswer with:
-        - answer: grounded response
-        - claims: individual verified claims
-        - citations: validated citations
-        - insufficient_evidence: True if evidence is lacking
-        """
+        """`on_stage(name)` is called before each stage (rewriting, retrieving,
+        generating, verifying); it may raise to cancel the request between stages."""
         history = history or []
-        lc_history = _format_history(history)
+        self.last_timings = {}
+        clock = {"stage": None, "start": time.perf_counter()}
+
+        def stage(name: Optional[str]) -> None:
+            now = time.perf_counter()
+            if clock["stage"]:
+                self.last_timings[clock["stage"]] = round((now - clock["start"]) * 1000)
+            clock["stage"], clock["start"] = name, now
+            if name and on_stage:
+                on_stage(name)
 
         # ── Step 1: Conditional query rewriting ─────────────────────────────
         # Only rewrite if there's conversation history (the question may be
         # a follow-up like "what about the second method?")
         effective_question = question
         query_was_rewritten = False
-
         if history:
+            stage("rewriting")
             try:
                 rewritten = self._rewrite_chain.invoke({
                     "question": question,
-                    "history": lc_history,
+                    "history": _format_history(history),
                 })
                 if rewritten and rewritten.lower() != question.lower():
-                    logger.info(
-                        "Query rewritten: %r → %r",
-                        question[:60],
-                        rewritten[:60],
-                    )
+                    logger.info("Query rewritten: %r → %r", question[:60], rewritten[:60])
                     effective_question = rewritten
                     query_was_rewritten = True
             except Exception as e:
                 logger.warning("Query rewriting failed, using original: %s", e)
 
-        # ── Step 2: Multi-query retrieval (RRF + BGE reranking) ─────────────
-        # Split compound research questions into bounded facets without another
-        # model call, then merge by chunk id so one facet cannot duplicate context.
-        facets = [
-            part.strip()
-            for part in re.split(
-                r"\s+(?:and|also|while|versus|vs\.?)\s+|[?;]",
-                effective_question,
-                flags=re.IGNORECASE,
-            )
-            if len(part.strip().split()) >= 3
-        ]
-        queries = list(dict.fromkeys([effective_question, *facets[:3]]))
-        retrieved = []
-        for retrieval_query in queries:
-            retrieved.extend(self._retriever.invoke(retrieval_query))
-        docs_by_id = {}
-        for doc in retrieved:
-            chunk_id = doc.metadata.get("chunk_id")
-            if chunk_id and chunk_id not in docs_by_id:
-                docs_by_id[chunk_id] = doc
-        docs = list(docs_by_id.values())[: max(self._retriever.top_k, 10)]
-
-        if not docs:
+        # ── Step 2: Routed multi-query retrieval ────────────────────────────
+        stage("retrieving")
+        chunks = self._retrieve(effective_question)
+        scores = top_scores(chunks)
+        if not chunks or below_relevance_floor(scores):
+            reason = "no_chunks" if not chunks else "low_relevance"
+            logger.info("Abstaining before generation (%s): %s", reason, scores)
+            stage("background")
+            background = self._background(effective_question)
+            stage(None)
             return StructuredAnswer(
-                answer=(
-                    "I could not find sufficient evidence in the uploaded documents "
-                    "to answer this question. Please ensure the relevant papers have "
-                    "been uploaded and processed."
-                ),
-                claims=[],
-                citations=[],
+                answer=NO_EVIDENCE_ANSWER,
                 insufficient_evidence=True,
                 confidence=0.0,
                 query_was_rewritten=query_was_rewritten,
                 rewritten_query=effective_question if query_was_rewritten else None,
+                background=background,
+                abstain_reason=reason,
+                **scores,
             )
+        pack = EvidencePack(chunks)
 
-        # ── Step 3: Format context block ─────────────────────────────────────
-        context = _chunks_to_context(docs)
-        raw_chunks = _docs_to_raw_chunks(docs)
+        # ── Step 3: Gemini structured answer over numbered evidence ─────────
+        human = f"Evidence:\n{pack.format()}\n\nQuestion: {effective_question}"
+        if history:
+            human = f"Conversation so far:\n{_history_text(history)}\n\n{human}"
+        # LLM errors propagate: an error message must never be returned as an answer.
+        stage("generating")
+        draft = invoke_structured(AnswerDraft, _ANSWER_SYSTEM, human, llm=self._llm)
 
-        # ── Step 4: Gemini with structured output ────────────────────────────
-        try:
-            result: StructuredAnswer = self._answer_chain.invoke({
-                "question":   effective_question,
-                "context":    context,
-                "history":    lc_history,
-            })
-        except Exception as e:
-            logger.error("LLM chain failed: %s", e)
-            # Fallback: return insufficient_evidence rather than crashing
-            return StructuredAnswer(
-                answer=f"The AI service encountered an error: {e}. "
-                       f"Retrieved {len(docs)} relevant chunks but could not generate an answer.",
-                claims=[],
-                citations=[],
-                insufficient_evidence=True,
-                confidence=0.0,
-            )
+        stage("verifying")
+        answer = build_structured_answer(draft, pack, query_was_rewritten, effective_question)
+        answer.top_similarity, answer.top_rerank = scores["top_similarity"], scores["top_rerank"]
+        stage(None)
+        logger.info("ask timings (ms): %s", self.last_timings)
+        return answer
 
-        # ── Step 5: Citation validation ───────────────────────────────────────
-        validated_citations = validate_citations(result.citations, raw_chunks)
 
-        # ── Step 6: Claim verification (NO EVIDENCE = NO CLAIM) ──────────────
-        claims_with_valid_citations = [
-            claim.model_copy(
-                update={
-                    "supported_by": validate_citations(
-                        claim.supported_by,
-                        raw_chunks,
-                    )
-                }
-            )
-            for claim in result.claims
-        ]
-        verified_claims = verify_claims(claims_with_valid_citations)
-        ucr = unsupported_claim_rate(verified_claims)
-        if ucr > 0:
-            logger.warning(
-                "Answer has %.0f%% unsupported claims (%d/%d)",
-                ucr * 100,
-                sum(1 for c in verified_claims if not c.verified),
-                len(verified_claims),
-            )
+_REFUSAL = re.compile(
+    r"\b(not (mentioned|stated|reported|provided|specified|discussed|covered|found)|no (mention|information|evidence)"
+    r"|does not (contain|mention|provide|include|specify)|do not (contain|mention|provide|include|specify)"
+    r"|cannot be (determined|answered)|insufficient (evidence|information))\b",
+    re.IGNORECASE,
+)
 
-        return StructuredAnswer(
-            answer=result.answer,
-            claims=verified_claims,
-            citations=validated_citations,
-            insufficient_evidence=result.insufficient_evidence,
-            confidence=result.confidence,
-            query_was_rewritten=query_was_rewritten,
-            rewritten_query=effective_question if query_was_rewritten else None,
+
+def opens_with_refusal(answer: str) -> bool:
+    """The model sometimes says "the evidence does not mention X" but leaves
+    insufficient_evidence false. Only the opening sentence is checked, so a
+    limitation mentioned later in a real answer does not trigger it."""
+    first = re.split(r"(?<=[.!?])\s+", (answer or "").strip(), maxsplit=1)[0]
+    return bool(_REFUSAL.search(first))
+
+
+def build_structured_answer(
+    draft: AnswerDraft,
+    pack: EvidencePack,
+    query_was_rewritten: bool = False,
+    effective_question: Optional[str] = None,
+) -> StructuredAnswer:
+    """Resolve [Evidence N] markers to real chunks and verify every claim."""
+    order: Dict[int, int] = {}
+    for number in pack.numbers_in(draft.answer) + [n for c in draft.claims for n in c.evidence_numbers]:
+        if pack.block(number) and number not in order:
+            order[number] = len(order) + 1
+    # Show the passage window that supports the sentences citing each block,
+    # not just the first characters of the chunk.
+    cited_sentences: Dict[int, List[str]] = {}
+    for sentence in re.split(r"(?<=[.!?])\s+", draft.answer or ""):
+        for number in pack.numbers_in(sentence):
+            cited_sentences.setdefault(number, []).append(sentence)
+    for claim in draft.claims:
+        for number in claim.evidence_numbers:
+            cited_sentences.setdefault(number, []).append(claim.claim_text)
+    citations = [pack.citation(n, hint=" ".join(cited_sentences.get(n, []))) for n in order]
+
+    # NO EVIDENCE = NO CLAIM: a claim is verified only if one of its cited
+    # chunks (full text, not the display snippet) actually contains it.
+    verified_claims = []
+    number_mismatches = 0
+    for c in draft.claims:
+        claim_text = re.sub(r"\[Evidence[^\]]*\]", "", c.claim_text).strip()
+        supporting, reasons = [], []
+        for n in c.evidence_numbers:
+            if not pack.block(n):
+                continue
+            ok, reason = check_claim(claim_text, pack.block(n).get("content", ""))
+            if ok:
+                supporting.append(pack.citation(n, hint=claim_text))
+            else:
+                reasons.append(reason)
+        if not supporting and "numbers" in reasons:
+            number_mismatches += 1
+        verified_claims.append(Claim(claim_text=claim_text, supported_by=supporting, verified=bool(supporting)))
+    ucr = unsupported_claim_rate(verified_claims)
+    if ucr > 0:
+        logger.warning(
+            "Answer has %.0f%% unsupported claims (%d/%d)",
+            ucr * 100,
+            sum(1 for c in verified_claims if not c.verified),
+            len(verified_claims),
         )
+    # Factual-looking sentences with no [Evidence N] marker at all: the claims
+    # list can omit them, so they would otherwise read as grounded.
+    uncited = [
+        s for s in re.split(r"(?<=[.!?])\s+", draft.answer or "")
+        if is_content_sentence(s) and not pack.numbers_in(s) and not _REFUSAL.search(s)
+    ]
+    confidence = draft.confidence * (1.0 - 0.5 * ucr)
+    answer = renumber_markers(draft.answer, order)
+    unsupported = [c.claim_text for c in verified_claims if not c.verified]
+    notes = []
+    if unsupported:
+        # Be explicit instead of presenting every sentence as equally grounded.
+        detail = (f" ({number_mismatches} state numbers that do not appear in their cited passages)"
+                  if number_mismatches else "")
+        notes.append(
+            f"{len(unsupported)} of {len(verified_claims)} claims in this answer could not be "
+            f"matched to the cited passages{detail} and should be checked against the sources."
+        )
+    if uncited and citations:
+        notes.append(f"{len(uncited)} sentence(s) carry no citation and are not backed by a specific passage.")
+    if notes:
+        answer += "\n\nNote: " + " ".join(notes)
 
-
-# ── Paper comparison chain ────────────────────────────────────────────────────
-
-_COMPARE_SYSTEM = """You are a rigorous academic researcher comparing scientific papers.
-Compare ONLY based on the provided evidence. Do not fabricate any information.
-If the evidence is insufficient for comparison, set insufficient_evidence=true.
-Output valid JSON matching: {format_instructions}"""
-
-_COMPARE_HUMAN = """Evidence from the papers being compared:
-{context}
-
-Comparison question or focus: {question}
-
-Provide a structured comparison."""
-
-
-def run_comparison_chain(
-    document_ids: List[str],
-    collection_id: Optional[str],
-    question: str,
-    top_k: int = 12,
-) -> PaperComparisonResult:
-    """LangChain-backed paper comparison using structured output."""
-    llm = _get_llm()
-    parser = PydanticOutputParser(pydantic_object=PaperComparisonResult)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", _COMPARE_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        ("human", _COMPARE_HUMAN),
-    ])
-
-    retriever = DocLensRetriever.create(
-        collection_id=collection_id,
-        document_ids=document_ids,
-        top_k=top_k,
+    return StructuredAnswer(
+        answer=answer,
+        claims=verified_claims,
+        citations=citations,
+        insufficient_evidence=draft.insufficient_evidence or not citations or opens_with_refusal(draft.answer),
+        confidence=round(confidence * (0.8 if draft.evidence_conflict else 1.0), 3),
+        evidence_conflict=draft.evidence_conflict,
+        background=clean_background(draft.background),
+        query_was_rewritten=query_was_rewritten,
+        rewritten_query=effective_question if query_was_rewritten else None,
+        uncited_sentences=len(uncited),
     )
-    docs = retriever.invoke(question or "Compare the main findings, methods, and conclusions")
-    raw_chunks = _docs_to_raw_chunks(docs)
-
-    if not docs:
-        return PaperComparisonResult(
-            narrative="Insufficient evidence to compare the selected documents.",
-            insufficient_evidence=True,
-        )
-
-    context = _chunks_to_context(docs)
-    chain = prompt | llm | parser
-    try:
-        result = chain.invoke({"question": question, "context": context})
-        # Validate citations
-        result.citations = validate_citations(result.citations, raw_chunks)
-        return result
-    except Exception as e:
-        logger.error("Comparison chain failed: %s", e)
-        return PaperComparisonResult(
-            narrative=f"Comparison failed due to an error: {e}",
-            insufficient_evidence=True,
-        )
-
-
-# ── Literature review chain ───────────────────────────────────────────────────
-
-_REVIEW_SYSTEM = """You are an expert academic writer producing a structured literature review.
-Write ONLY based on the provided evidence. Cite every claim.
-If evidence is insufficient, set insufficient_evidence=true.
-Output valid JSON matching: {format_instructions}"""
-
-_REVIEW_HUMAN = """Evidence:
-{context}
-
-Topic: {topic}
-
-Write a structured literature review with sections: Introduction, Methods, Findings, Gaps, Conclusion.
-Also generate a full markdown version in the 'markdown' field."""
-
-
-def run_literature_review_chain(
-    collection_id: Optional[str],
-    document_ids: Optional[List[str]],
-    topic: str,
-    top_k: int = 15,
-) -> LiteratureReviewResult:
-    """LangChain-backed literature review using structured output."""
-    llm = _get_llm()
-    parser = PydanticOutputParser(pydantic_object=LiteratureReviewResult)
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", _REVIEW_SYSTEM.format(format_instructions=parser.get_format_instructions())),
-        ("human", _REVIEW_HUMAN),
-    ])
-
-    retriever = DocLensRetriever.create(
-        collection_id=collection_id,
-        document_ids=document_ids,
-        top_k=top_k,
-    )
-    docs = retriever.invoke(topic or "comprehensive literature review")
-    raw_chunks = _docs_to_raw_chunks(docs)
-
-    if not docs:
-        return LiteratureReviewResult(
-            title=f"Literature Review: {topic}",
-            topic=topic,
-            sections={},
-            markdown="Insufficient evidence to generate a literature review.",
-            insufficient_evidence=True,
-        )
-
-    context = _chunks_to_context(docs)
-    chain = prompt | llm | parser
-    try:
-        result = chain.invoke({"topic": topic, "context": context})
-        result.citations = validate_citations(result.citations or [], raw_chunks)
-        return result
-    except Exception as e:
-        logger.error("Literature review chain failed: %s", e)
-        return LiteratureReviewResult(
-            title=f"Literature Review: {topic}",
-            topic=topic,
-            sections={},
-            markdown=f"Literature review failed due to an error: {e}",
-            insufficient_evidence=True,
-        )

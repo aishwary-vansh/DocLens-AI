@@ -1,373 +1,382 @@
 // src/pages/Login.tsx
-import { useState, FormEvent } from 'react';
+// Split-screen sign-in: product story on the left, auth card on the right.
+// Google sign-in (Google Identity Services) plus email/password, with inline
+// validation, password visibility, strength meter and animated mode switch.
+import { useCallback, useEffect, useMemo, useState, FormEvent, KeyboardEvent, ReactNode } from 'react';
+import { AnimatePresence, motion, useAnimationControls } from 'framer-motion';
+import {
+  AlertCircle, ArrowLeft, ArrowRight, BookOpen, Eye, EyeOff, FileSearch, GitCompare,
+  Lightbulb, Loader2, Lock, Mail, Quote, ShieldCheck, User,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import useGoogleSignIn from '../hooks/useGoogleSignIn';
 import BgCanvas from './landing/BgCanvas';
 import logoUrl from '@/assets/logo.png';
+import '../styles/auth.css';
 
 type Mode = 'login' | 'register';
 
-const Login = () => {
-  const { login, register, error, clearError } = useAuth();
-  const [mode, setMode]   = useState<Mode>('login');
-  const [email, setEmail] = useState('');
-  const [pass,  setPass]  = useState('');
-  const [name,  setName]  = useState('');
-  const [busy,  setBusy]  = useState(false);
-  const [local, setLocal] = useState('');
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  const reset = () => { clearError(); setLocal(''); };
+const FEATURES = [
+  { icon: FileSearch, title: 'Answers with receipts', text: 'Every sentence links to the exact passage and page it came from.' },
+  { icon: GitCompare, title: 'Cross-paper synthesis', text: 'Compare methods, datasets and results without mixing up studies.' },
+  { icon: Lightbulb, title: 'Defensible research gaps', text: 'Gaps are marked as stated by authors or inferred — never blurred.' },
+];
+
+const SAMPLE_QUESTIONS = [
+  { q: 'Which papers report results on WMT 2014, and how do they differ?', a: 'The Transformer reaches 28.4 BLEU on EN–DE', cite: 'Vaswani et al., p. 8' },
+  { q: 'What limitations do the authors themselves state?', a: 'Detection relied on a single wearable cohort', cite: 'Mishra et al., p. 11' },
+  { q: 'Where do BERT and GPT-3 disagree on fine-tuning?', a: 'GPT-3 is evaluated without gradient updates', cite: 'Brown et al., p. 5' },
+];
+
+function passwordStrength(pw: string) {
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (pw.length >= 12) score++;
+  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  const level = Math.min(4, score);
+  return { level, label: ['Too short', 'Weak', 'Fair', 'Good', 'Strong'][level] };
+}
+
+type LoginProps = {
+  /** Driven by the route (#/login or #/register). */
+  mode?: Mode;
+  onModeChange?: (mode: Mode) => void;
+  onBack?: () => void;
+};
+
+const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) => {
+  const { login, register, loginWithGoogle, error, clearError } = useAuth();
+  const [mode, setMode] = useState<Mode>(routeMode);
+  useEffect(() => { setMode(routeMode); }, [routeMode]);
+  const [email, setEmail] = useState('');
+  const [pass, setPass] = useState('');
+  const [name, setName] = useState('');
+  const [showPass, setShowPass] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
+  const [busy, setBusy] = useState<'email' | 'google' | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [sample, setSample] = useState(0);
+  const card = useAnimationControls();
+  const shake = useCallback(() => {
+    card.start({ x: [0, -9, 9, -6, 6, -3, 0], transition: { duration: 0.42 } });
+  }, [card]);
+
+  useEffect(() => {
+    card.start({ opacity: 1, y: 0, scale: 1, transition: { duration: 0.5, ease: 'easeOut' } });
+  }, [card]);
+
+  const onGoogle = useCallback(async (credential: string) => {
+    setBusy('google');
+    try { await loginWithGoogle(credential); } catch { shake(); } finally { setBusy(null); }
+  }, [loginWithGoogle, shake]);
+  const google = useGoogleSignIn(onGoogle, { text: mode === 'login' ? 'signin_with' : 'signup_with' });
+
+  useEffect(() => {
+    const id = window.setInterval(() => setSample((i) => (i + 1) % SAMPLE_QUESTIONS.length), 4200);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const errors = useMemo(() => ({
+    name: mode === 'register' && name.trim().length < 2 ? 'Enter your name (2+ characters).' : '',
+    email: !EMAIL_RE.test(email.trim()) ? 'Enter a valid email address.' : '',
+    pass: pass.length < 6 ? 'Use at least 6 characters.' : '',
+  }), [mode, name, email, pass]);
+  const strength = passwordStrength(pass);
+
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    setMode(next);
+    onModeChange?.(next);
+    setTouched({});
+    clearError();
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!email || !pass) return setLocal('Email and password required.');
-    if (mode === 'register' && !name) return setLocal('Name required.');
-    setBusy(true);
+    setTouched({ name: true, email: true, pass: true });
+    if (errors.email || errors.pass || errors.name) { shake(); return; }
+    setBusy('email');
     try {
-      if (mode === 'login') await login(email, pass);
-      else                  await register(email, pass, name);
-    } catch { /* errors surfaced via context */ }
-    finally { setBusy(false); }
+      if (mode === 'login') await login(email.trim(), pass);
+      else await register(email.trim(), pass, name.trim());
+    } catch {
+      shake();
+    } finally {
+      setBusy(null);
+    }
   };
 
+  const onPassKey = (e: KeyboardEvent<HTMLInputElement>) => setCapsLock(e.getModifierState?.('CapsLock') ?? false);
+  const fieldError = (key: 'name' | 'email' | 'pass') => (touched[key] ? errors[key] : '');
+  const current = SAMPLE_QUESTIONS[sample];
+
   return (
-    <div className="login-root">
+    <div className="auth-root">
       <BgCanvas />
+      <div className="auth-glow auth-glow-a" />
+      <div className="auth-glow auth-glow-b" />
 
-      {/* ── Ambient glow orbs ── */}
-      <div className="login-orb login-orb-1" />
-      <div className="login-orb login-orb-2" />
+      {/* ── Story panel ── */}
+      <aside className="auth-story" aria-hidden="true">
+        <div className="auth-story-brand">
+          <img src={logoUrl} alt="" />
+          <span>DocLens <em>AI</em></span>
+        </div>
 
-      {/* ── Card ── */}
-      <div className="login-card">
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+          <h2 className="auth-story-title">
+            Read less.<br /><span>Understand more.</span>
+          </h2>
+          <p className="auth-story-lead">
+            Upload papers, ask questions, and get answers you can verify — every claim traced back to its source.
+          </p>
+        </motion.div>
 
-        {/* Brand */}
-        <div className="login-brand">
-          <img src={logoUrl} alt="DocLens Logo" style={{ width: 80, height: "auto", objectFit: "contain", flexShrink: 0, borderRadius: 12 }} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <span className="login-logo-text">DocLens</span>
-            <span className="login-logo-badge" style={{ alignSelf: 'flex-start' }}>AI</span>
+        <div className="auth-demo">
+          <div className="auth-demo-label"><BookOpen size={13} /> Live example</div>
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={sample}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.35 }}
+            >
+              <p className="auth-demo-q">{current.q}</p>
+              <div className="auth-demo-a">
+                <Quote size={14} />
+                <span>{current.a}<sup>[1]</sup></span>
+              </div>
+              <div className="auth-demo-cite">[1] {current.cite}</div>
+            </motion.div>
+          </AnimatePresence>
+          <div className="auth-demo-dots">
+            {SAMPLE_QUESTIONS.map((_, i) => <i key={i} className={i === sample ? 'on' : ''} />)}
           </div>
         </div>
 
-        {/* Headline */}
-        <div className="login-headline">
-          <h1 className="login-title">
-            {mode === 'login' ? 'Welcome back' : 'Get started'}
-          </h1>
-          <p className="login-subtitle">
-            {mode === 'login'
-              ? 'Sign in to your research workspace'
-              : 'Create your research workspace'}
-          </p>
-        </div>
-
-        {/* Mode tabs */}
-        <div className="login-tabs">
-          {(['login', 'register'] as Mode[]).map(m => (
-            <button
-              key={m}
-              onClick={() => { setMode(m); reset(); }}
-              className={`login-tab${mode === m ? ' active' : ''}`}
-            >
-              {m === 'login' ? 'Sign In' : 'Register'}
-            </button>
+        <ul className="auth-features">
+          {FEATURES.map(({ icon: Icon, title, text }, i) => (
+            <motion.li key={title} initial={{ opacity: 0, x: -12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.25 + i * 0.12 }}>
+              <span className="auth-feature-icon"><Icon size={17} /></span>
+              <div><strong>{title}</strong><p>{text}</p></div>
+            </motion.li>
           ))}
-        </div>
+        </ul>
+      </aside>
 
-        {/* Form */}
-        <form onSubmit={submit} className="login-form">
-          {mode === 'register' && (
-            <Field label="Full Name" type="text" value={name}
-              onChange={v => { setName(v); reset(); }} placeholder="Your name" />
-          )}
-          <Field label="Email" type="email" value={email}
-            onChange={v => { setEmail(v); reset(); }} placeholder="you@research.ai" />
-          <Field label="Password" type="password" value={pass}
-            onChange={v => { setPass(v); reset(); }} placeholder="••••••••" />
-
-          {(local || error) && (
-            <div className="login-error">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-              {local || error}
-            </div>
-          )}
-
-          <button type="submit" disabled={busy} className={`login-submit${busy ? ' busy' : ''}`}>
-            {busy ? (
-              <>
-                <span className="login-spinner" />
-                Please wait…
-              </>
-            ) : (
-              <>
-                {mode === 'login' ? 'Sign In' : 'Create Account'}
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M5 12h14M12 5l7 7-7 7"/>
-                </svg>
-              </>
-            )}
+      {/* ── Auth card ── */}
+      <main className="auth-panel">
+        {onBack && (
+          <button type="button" className="auth-back" onClick={onBack}>
+            <ArrowLeft size={15} /> Back to home
           </button>
-        </form>
+        )}
 
+        <motion.div className="auth-card" initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={card}>
+          <div className="auth-card-brand">
+            <img src={logoUrl} alt="DocLens" />
+          </div>
 
-      </div>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={mode}
+              className="auth-heading"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
+            >
+              <h1>{mode === 'login' ? 'Welcome back' : 'Create your workspace'}</h1>
+              <p>{mode === 'login' ? 'Sign in to continue your research.' : 'Start organising and questioning your papers in minutes.'}</p>
+            </motion.div>
+          </AnimatePresence>
 
-      {/* Bottom label */}
-      <div className="login-footer">
-        © Aishwary Vansh 2026 · DocLens AI · Research Intelligence Platform
-      </div>
+          <div className="auth-tabs" role="tablist" aria-label="Sign in or create account">
+            {(['login', 'register'] as Mode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                role="tab"
+                aria-selected={mode === m}
+                className={mode === m ? 'active' : ''}
+                onClick={() => switchMode(m)}
+              >
+                {mode === m && <motion.span layoutId="auth-tab-pill" className="auth-tab-pill" transition={{ type: 'spring', stiffness: 420, damping: 34 }} />}
+                <span className="auth-tab-label">{m === 'login' ? 'Sign in' : 'Create account'}</span>
+              </button>
+            ))}
+          </div>
 
-      <style>{`
-        .login-root {
-          position: fixed; inset: 0;
-          background: #050507;
-          color: #eafaf1;
-          font-family: 'Inter', sans-serif;
-          display: flex; align-items: center; justify-content: center;
-          overflow: hidden;
-        }
+          {/* Google */}
+          <div className="auth-google">
+            <div ref={google.buttonRef} className={`auth-google-slot ${google.status === 'ready' ? 'is-ready' : ''}`} />
+            {google.status !== 'ready' && (
+              <button
+                type="button"
+                className="auth-google-fallback"
+                disabled={google.status === 'loading'}
+                title={google.status === 'unconfigured' ? 'Set GOOGLE_CLIENT_ID on the server to enable Google sign-in' : undefined}
+                onClick={() => setTouched((t) => ({ ...t, google: true }))}
+              >
+                {google.status === 'loading' ? <Loader2 size={17} className="auth-spin" /> : <GoogleMark />}
+                Continue with Google
+              </button>
+            )}
+            {busy === 'google' && <div className="auth-google-busy"><Loader2 size={16} className="auth-spin" /> Signing you in…</div>}
+            <AnimatePresence>
+              {touched.google && google.status !== 'ready' && google.status !== 'loading' && (
+                <motion.p className="auth-hint" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+                  {google.status === 'unconfigured'
+                    ? 'Google sign-in is not enabled on this server yet. Use email below, or ask the admin to set GOOGLE_CLIENT_ID.'
+                    : google.message}
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </div>
 
-        .login-orb {
-          position: absolute;
-          border-radius: 50%;
-          pointer-events: none;
-          filter: blur(120px);
-        }
-        .login-orb-1 {
-          width: 500px; height: 500px;
-          top: -100px; left: -100px;
-          background: radial-gradient(circle, rgba(6,182,212,0.12) 0%, transparent 70%);
-        }
-        .login-orb-2 {
-          width: 400px; height: 400px;
-          bottom: -80px; right: -80px;
-          background: radial-gradient(circle, rgba(16,185,129,0.10) 0%, transparent 70%);
-        }
+          <div className="auth-divider"><span>or with email</span></div>
 
-        .login-card {
-          position: relative; z-index: 1;
-          width: 100%; max-width: 440px;
-          margin: 0 1.5rem;
-          background: rgba(9, 9, 15, 0.85);
-          border: 1px solid rgba(16, 185, 129, 0.18);
-          border-radius: 20px;
-          padding: 2.8rem 2.5rem;
-          box-shadow:
-            0 0 0 1px rgba(6,182,212,0.06),
-            0 32px 80px rgba(0,0,0,0.7),
-            inset 0 1px 0 rgba(255,255,255,0.04);
-          backdrop-filter: blur(24px);
-        }
+          <form onSubmit={submit} className="auth-form" noValidate>
+            <AnimatePresence initial={false}>
+              {mode === 'register' && (
+                <motion.div
+                  key="name"
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.22 }}
+                  style={{ overflow: 'hidden' }}
+                >
+                  <Field
+                    id="auth-name" label="Full name" icon={<User size={16} />} autoComplete="name"
+                    value={name} placeholder="Ada Lovelace" error={fieldError('name')}
+                    onChange={(v) => { setName(v); clearError(); }} onBlur={() => setTouched((t) => ({ ...t, name: true }))}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-        /* Brand */
-        .login-brand {
-          display: flex; align-items: center; gap: 0.65rem;
-          margin-bottom: 2rem;
-        }
-        .login-logo-mark {
-          width: 30px; height: 30px;
-          border: 1.5px solid rgba(6,182,212,0.5);
-          border-radius: 50%;
-          display: flex; align-items: center; justify-content: center;
-          background: rgba(6,182,212,0.06);
-          flex-shrink: 0;
-        }
-        .login-logo-inner {
-          width: 10px; height: 10px;
-          border: 1.5px solid #06b6d4;
-          border-radius: 50%;
-          background: rgba(6,182,212,0.25);
-        }
-        .login-logo-text {
-          font-family: 'Outfit', sans-serif;
-          font-weight: 800; font-size: 1rem;
-          letter-spacing: 0.14em; text-transform: uppercase;
-          background: linear-gradient(135deg, #cffafe, #34d399);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-        }
-        .login-logo-badge {
-          font-family: 'Inter', sans-serif;
-          font-size: 0.52rem; font-weight: 700;
-          letter-spacing: 0.12em; text-transform: uppercase;
-          color: #06b6d4;
-          border: 1px solid rgba(6,182,212,0.35);
-          background: rgba(6,182,212,0.08);
-          padding: 0.18rem 0.45rem;
-          border-radius: 4px;
-        }
+            <Field
+              id="auth-email" label="Email" type="email" icon={<Mail size={16} />} autoComplete="email"
+              value={email} placeholder="you@university.edu" error={fieldError('email')}
+              valid={!errors.email && email.length > 0}
+              onChange={(v) => { setEmail(v); clearError(); }} onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+            />
 
-        /* Headline */
-        .login-headline { margin-bottom: 1.8rem; }
-        .login-title {
-          font-family: 'Outfit', sans-serif;
-          font-weight: 800; font-size: 1.75rem;
-          letter-spacing: -0.03em; line-height: 1.1;
-          background: linear-gradient(135deg, #cffafe 0%, #34d399 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          margin: 0 0 0.4rem;
-        }
-        .login-subtitle {
-          font-size: 0.8rem; line-height: 1.6;
-          color: rgba(234,250,241,0.48);
-          margin: 0;
-          font-family: 'Inter', sans-serif;
-        }
+            <Field
+              id="auth-pass" label="Password" type={showPass ? 'text' : 'password'} icon={<Lock size={16} />}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+              value={pass} placeholder={mode === 'login' ? 'Your password' : 'At least 6 characters'} error={fieldError('pass')}
+              onChange={(v) => { setPass(v); clearError(); }} onBlur={() => setTouched((t) => ({ ...t, pass: true }))}
+              onKeyUp={onPassKey}
+              trailing={(
+                <button type="button" className="auth-eye" onClick={() => setShowPass((s) => !s)} aria-label={showPass ? 'Hide password' : 'Show password'}>
+                  {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              )}
+            />
 
-        /* Tabs */
-        .login-tabs {
-          display: flex; gap: 4px;
-          background: rgba(0,0,0,0.35);
-          border: 1px solid rgba(16,185,129,0.12);
-          border-radius: 10px; padding: 4px;
-          margin-bottom: 1.6rem;
-        }
-        .login-tab {
-          flex: 1; padding: 0.52rem;
-          background: transparent;
-          border: 1px solid transparent;
-          border-radius: 7px;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.72rem; font-weight: 600;
-          letter-spacing: 0.04em; text-transform: uppercase;
-          color: rgba(234,250,241,0.38);
-          cursor: pointer;
-          transition: all 0.18s ease;
-        }
-        .login-tab.active {
-          background: rgba(6,182,212,0.10);
-          border-color: rgba(6,182,212,0.28);
-          color: #cffafe;
-        }
-        .login-tab:hover:not(.active) {
-          color: rgba(234,250,241,0.65);
-          background: rgba(255,255,255,0.04);
-        }
+            {capsLock && <p className="auth-hint auth-hint-warn">Caps Lock is on.</p>}
 
-        /* Form */
-        .login-form {
-          display: flex; flex-direction: column; gap: 1rem;
-        }
-        .login-field {
-          display: flex; flex-direction: column; gap: 0.4rem;
-        }
-        .login-label {
-          font-family: 'Inter', sans-serif;
-          font-size: 0.62rem; letter-spacing: 0.14em;
-          text-transform: uppercase; font-weight: 600;
-          color: rgba(234,250,241,0.42);
-        }
-        .login-input {
-          font-family: 'Inter', sans-serif;
-          font-size: 0.875rem; letter-spacing: 0.01em;
-          padding: 0.72rem 0.9rem;
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(16,185,129,0.15);
-          border-radius: 9px;
-          color: #eafaf1;
-          outline: none;
-          transition: border-color 0.18s, background 0.18s, box-shadow 0.18s;
-          width: 100%;
-        }
-        .login-input::placeholder {
-          color: rgba(234,250,241,0.22);
-        }
-        .login-input:focus {
-          border-color: rgba(6,182,212,0.45);
-          background: rgba(6,182,212,0.04);
-          box-shadow: 0 0 0 3px rgba(6,182,212,0.08);
-        }
+            {mode === 'register' && pass.length > 0 && (
+              <div className="auth-strength" aria-live="polite">
+                <div className="auth-strength-bars">
+                  {[0, 1, 2, 3].map((i) => <i key={i} className={i < strength.level ? `lvl-${strength.level}` : ''} />)}
+                </div>
+                <span>{strength.label}</span>
+              </div>
+            )}
 
-        /* Error */
-        .login-error {
-          display: flex; align-items: center; gap: 0.5rem;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.75rem; color: #f87171;
-          background: rgba(239,68,68,0.06);
-          border: 1px solid rgba(239,68,68,0.18);
-          border-radius: 8px;
-          padding: 0.6rem 0.85rem;
-          line-height: 1.5;
-        }
+            <AnimatePresence>
+              {error && (
+                <motion.div className="auth-error" role="alert" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                  <AlertCircle size={15} /> {error}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-        /* Submit */
-        .login-submit {
-          display: flex; align-items: center; justify-content: center; gap: 0.5rem;
-          margin-top: 0.3rem;
-          padding: 0.82rem;
-          background: linear-gradient(135deg, #06b6d4, #10b981);
-          color: #fff;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.82rem; font-weight: 700;
-          letter-spacing: 0.04em;
-          border: none; border-radius: 10px;
-          cursor: pointer;
-          transition: opacity 0.18s, transform 0.18s, box-shadow 0.18s;
-          box-shadow: 0 4px 20px rgba(6,182,212,0.30);
-          width: 100%;
-        }
-        .login-submit:hover:not(.busy) {
-          opacity: 0.9;
-          transform: translateY(-1px);
-          box-shadow: 0 8px 32px rgba(6,182,212,0.45);
-        }
-        .login-submit.busy {
-          background: rgba(255,255,255,0.08);
-          color: rgba(234,250,241,0.45);
-          box-shadow: none;
-          cursor: not-allowed;
-        }
-        .login-spinner {
-          width: 14px; height: 14px;
-          border: 2px solid rgba(234,250,241,0.2);
-          border-top-color: rgba(234,250,241,0.7);
-          border-radius: 50%;
-          animation: login-spin 0.7s linear infinite;
-          flex-shrink: 0;
-        }
-        @keyframes login-spin { to { transform: rotate(360deg); } }
+            <motion.button
+              type="submit"
+              className="auth-submit"
+              disabled={busy !== null}
+              whileHover={busy ? undefined : { y: -1 }}
+              whileTap={busy ? undefined : { scale: 0.985 }}
+            >
+              {busy === 'email' ? (
+                <><Loader2 size={17} className="auth-spin" /> {mode === 'login' ? 'Signing in…' : 'Creating account…'}</>
+              ) : (
+                <>{mode === 'login' ? 'Sign in' : 'Create account'} <ArrowRight size={17} /></>
+              )}
+            </motion.button>
+          </form>
 
+          <p className="auth-switch">
+            {mode === 'login' ? "New to DocLens? " : 'Already have an account? '}
+            <button type="button" onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+              {mode === 'login' ? 'Create an account' : 'Sign in'}
+            </button>
+          </p>
 
+          <p className="auth-trust"><ShieldCheck size={13} /> Your papers stay private to your account.</p>
+        </motion.div>
 
-        /* Footer */
-        .login-footer {
-          position: fixed; bottom: 1.5rem; left: 0; right: 0;
-          text-align: center; z-index: 1;
-          font-family: 'Inter', sans-serif;
-          font-size: 0.6rem; letter-spacing: 0.1em;
-          text-transform: uppercase;
-          color: rgba(234,250,241,0.22);
-        }
-      `}</style>
+        <footer className="auth-footer">© Aishwary Vansh 2026 · DocLens AI</footer>
+      </main>
     </div>
   );
 };
 
-/* ── Reusable field ── */
-const Field = ({ label, type, value, onChange, placeholder }: {
-  label: string; type: string;
-  value: string; onChange: (v: string) => void; placeholder: string;
-}) => {
-  const [focused, setFocused] = useState(false);
+function Field({
+  id, label, icon, value, onChange, onBlur, onKeyUp, placeholder, type = 'text', error, valid, trailing, autoComplete,
+}: {
+  id: string; label: string; icon: ReactNode; value: string; onChange: (v: string) => void; onBlur?: () => void;
+  onKeyUp?: (e: KeyboardEvent<HTMLInputElement>) => void; placeholder: string; type?: string; error?: string;
+  valid?: boolean; trailing?: ReactNode; autoComplete?: string;
+}) {
   return (
-    <div className="login-field">
-      <label className="login-label">{label}</label>
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={e => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        className={`login-input${focused ? ' focused' : ''}`}
-      />
+    <div className={`auth-field ${error ? 'has-error' : ''} ${valid ? 'is-valid' : ''}`}>
+      <label htmlFor={id}>{label}</label>
+      <div className="auth-input-wrap">
+        <span className="auth-input-icon">{icon}</span>
+        <input
+          id={id}
+          type={type}
+          value={value}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${id}-error` : undefined}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+          onKeyUp={onKeyUp}
+        />
+        {trailing}
+      </div>
+      <AnimatePresence>
+        {error && (
+          <motion.span id={`${id}-error`} className="auth-field-error" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
+            {error}
+          </motion.span>
+        )}
+      </AnimatePresence>
     </div>
   );
-};
+}
+
+function GoogleMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
+}
 
 export default Login;

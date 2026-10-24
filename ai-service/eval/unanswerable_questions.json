@@ -1,0 +1,21 @@
+{
+  "description": "Questions the eval papers (BERT, Attention Is All You Need, GPT-3 Few-Shot, COVID smartwatch) do not answer. `kind` is off_topic (nothing to do with the papers) or in_domain (about the papers, but the answer is not in them). Used by eval/abstention_calibration.py. Written by hand on 2026-10-24; the in_domain ones were chosen to be absent, not verified line by line against every PDF.",
+  "questions": [
+    {"id": "u-imagenet", "kind": "in_domain", "question": "What accuracy does the Transformer reach on ImageNet image classification?"},
+    {"id": "u-bert-co2", "kind": "in_domain", "question": "What is the carbon footprint in tons of CO2 of training BERT?"},
+    {"id": "u-watch-price", "kind": "in_domain", "question": "What was the price of the smartwatches given to the study participants?"},
+    {"id": "u-gpt3-rl", "kind": "in_domain", "question": "Which reinforcement learning algorithm is used to fine-tune GPT-3 from human feedback?"},
+    {"id": "u-bert-wmt", "kind": "in_domain", "question": "What BLEU score does BERT achieve on WMT English-German translation?"},
+    {"id": "u-librispeech", "kind": "in_domain", "question": "What word error rate does the Transformer achieve on LibriSpeech speech recognition?"},
+    {"id": "u-protein", "kind": "in_domain", "question": "How does GPT-3 perform on protein structure prediction?"},
+    {"id": "u-phone-latency", "kind": "in_domain", "question": "What is the inference latency of GPT-3 on a smartphone?"},
+    {"id": "u-deaths", "kind": "in_domain", "question": "How many patients died during the COVID-19 smartwatch study?"},
+    {"id": "u-mri", "kind": "in_domain", "question": "Which MRI image dataset was used to train the COVID-19 detection model?"},
+    {"id": "u-water", "kind": "off_topic", "question": "What is the boiling point of water at sea level?"},
+    {"id": "u-worldcup", "kind": "off_topic", "question": "Who won the 2018 FIFA World Cup?"},
+    {"id": "u-bread", "kind": "off_topic", "question": "What is a good recipe for sourdough bread?"},
+    {"id": "u-stock", "kind": "off_topic", "question": "What is the current stock price of Alphabet?"},
+    {"id": "u-capital", "kind": "off_topic", "question": "What is the capital city of Australia?"},
+    {"id": "u-guitar", "kind": "off_topic", "question": "How do I tune a six-string guitar?"}
+  ]
+}

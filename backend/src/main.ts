@@ -4,7 +4,6 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { join } from 'path';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -53,8 +52,9 @@ async function bootstrap() {
     }),
   );
 
-  // ── Static uploads directory ─────────────────────────────────────────────
-  app.useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/uploads' });
+  // ── Uploaded PDFs ────────────────────────────────────────────────────────
+  // Not served statically: files are only reachable through the JWT-guarded,
+  // ownership-checked GET /api/v1/documents/:id/download route.
 
   // ── Global prefix ────────────────────────────────────────────────────────
   app.setGlobalPrefix('api/v1');

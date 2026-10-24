@@ -1,631 +1,233 @@
 # DocLens AI
 
-## Citation-First Research Intelligence Platform
+**Citation-first research assistant for academic papers.** Upload PDFs, organise them into collections, ask questions across them, compare papers, and generate literature reviews. Every answer is tied to page-level source passages, and claims without evidence are flagged.
 
-DocLens AI turns research papers into an evidence-grounded research workspace.
-Researchers can upload papers, organize them into workspaces and collections,
-search across documents, ask questions, compare papers, generate literature
-reviews, and trace answers back to page-level source evidence.
+> **No evidence = no claim.**
 
-The platform follows one core rule:
-
-> **No evidence = no claim**
-
-The implementation is intentionally separated into a lightweight application
-control plane and a Python AI service. The NestJS backend owns authentication,
-authorization, uploads, persistence, and API contracts. The FastAPI service owns
-PDF extraction, embeddings, retrieval, generation, and verification.
+![Status](https://img.shields.io/badge/status-portfolio%20project-blue)
+![Frontend](https://img.shields.io/badge/frontend-React%2019%20%2B%20Vite-61dafb)
+![Backend](https://img.shields.io/badge/backend-NestJS%2011%20%2B%20Prisma-e0234e)
+![AI](https://img.shields.io/badge/AI-FastAPI%20%2B%20LangChain-009688)
+![DB](https://img.shields.io/badge/DB-PostgreSQL%20%2B%20pgvector-336791)
 
 ---
 
-## Core capabilities
+## Highlights
 
-- Workspace, collection, and paper library management
-- Authenticated PDF upload with processing status
-- PyMuPDF text extraction with page metadata
-- Section-aware text chunking
-- Native PDF table evidence extraction
-- Figure/caption evidence representation
-- BGE-M3 embeddings stored in PostgreSQL with pgvector
-- Hybrid semantic and keyword retrieval
-- Reciprocal Rank Fusion (RRF)
-- BGE cross-encoder reranking
-- Conversational multi-paper Q&A
-- Follow-up question rewriting and bounded multi-query retrieval
-- Structured Gemini answers
-- Page- and chunk-level citations
-- Citation overlap validation and claim verification
-- Paper comparison
-- Literature-review generation
-- Research notes and reading progress
-- Retrieval, citation, grounding, and latency evaluation
-
-The current ingestion path does not use Docling, Semantic Scholar, a separate
-vector database, or a mandatory knowledge-graph processing stage.
+- **Hybrid retrieval pipeline:** BGE-M3 dense embeddings + PostgreSQL full-text keyword search, fused with Reciprocal Rank Fusion (k = 60), then re-ranked by a BGE cross-encoder (`bge-reranker-v2-m3`).
+- **Grounded generation:** Gemini returns typed Pydantic answers. Citations are resolved server-side from numbered `[Evidence N]` blocks, so the model cannot invent chunk IDs.
+- **Claim verification:** each claim is checked against its cited passage (number presence and token containment). Unsupported claims are disclosed in the answer and lower the confidence score.
+- **Multi-paper synthesis:** structured comparison matrices, seven-section literature reviews, and research-gap analysis, each with a per-sentence verifier for citation support and paper misattribution.
+- **Layout-aware ingestion:** PyMuPDF extraction with typography-based heading detection, running header/footer removal, section-bounded chunking, native table extraction, and figure/table caption chunks.
+- **Real-time UX:** Socket.IO status updates during ingestion, streamed (SSE) query progress with cancel, and Markdown answers with clickable `[n]` citations.
+- **Measured, not guessed:** offline evaluation harnesses for retrieval (Recall@K, MRR), grounding, abstention calibration, and latency. Results are documented with the tuning decisions behind them.
 
 ---
 
-# System architecture
+## Architecture
 
-```text
-                                Browser
-                                   │
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │ React + Vite + Tailwind      │
-                    │ Research workspace UI        │
-                    └──────────────┬───────────────┘
-                                   │ REST / WebSocket
-                                   ▼
-                    ┌──────────────────────────────┐
-                    │ NestJS Backend                │
-                    │ Auth, ACL, APIs, persistence  │
-                    │ Uploads, jobs, AI proxy       │
-                    └───────┬──────────────┬─────────┘
-                            │              │
-                            ▼              ▼
-                 ┌────────────────┐  ┌──────────────────────┐
-                 │ Redis          │  │ FastAPI AI Service   │
-                 │ Cache/session  │  │ Ingestion and RAG    │
-                 │ job coordination│ │ Models and evaluation│
-                 └────────────────┘  └──────────┬───────────┘
-                                                │
-                                                ▼
-                         ┌──────────────────────────────────┐
-                         │ PostgreSQL + pgvector             │
-                         │ Application data, chunks, vectors │
-                         └──────────────────────────────────┘
-                                                ▲
-                                                │
-                         ┌──────────────────────┴────────────┐
-                         │ Persistent PDF upload volume       │
-                         │ Backend read/write, AI read-only   │
-                         └───────────────────────────────────┘
+```mermaid
+flowchart LR
+  B[Browser<br/>React SPA] -->|HTTP /api/v1 + JWT| N[Nginx :8080]
+  N -->|/api/| BE[NestJS backend :3001]
+  B <-->|Socket.IO| BE
+  BE -->|Prisma| PG[(PostgreSQL + pgvector)]
+  BE -->|cache| R[(Redis)]
+  BE -->|HTTP + X-Internal-Secret| AI[FastAPI AI service :8000]
+  AI -->|psycopg2 raw SQL| PG
+  AI -->|Gemini API| G[(Google Gemini)]
+  BE ---|writes PDFs| V[(uploads volume)]
+  AI ---|reads PDFs, read-only| V
 ```
 
-## Service responsibilities
+**Division of responsibilities**
 
-| Service | Responsibility |
+| Service | Owns |
 | --- | --- |
-| Frontend | Research UI, uploads, chat, citations, comparison, reviews |
-| NestJS backend | Authentication, authorization, API contracts, uploads, persistence, orchestration |
-| FastAPI AI service | PDF extraction, chunking, embeddings, retrieval, reranking, generation, verification |
-| PostgreSQL | Users, workspaces, documents, chunks, chats, citations, reviews, notes |
-| pgvector | 1024-dimensional BGE-M3 chunk embeddings |
-| Redis | Cache, session support, and processing coordination |
-| Upload volume | Persistent PDF files shared between backend and AI service |
+| **NestJS backend** | JWT auth, Google sign-in, ownership checks on every resource, uploads, processing orchestration, chat history, comparisons, literature reviews, notes, reading progress, public `/api/v1` API |
+| **FastAPI AI service** | PDF parsing, chunking, embeddings, hybrid retrieval, re-ranking, LLM calls, claim verification, cross-paper synthesis |
+| **PostgreSQL + pgvector** | Application records (via Prisma) and 1024-dimensional chunk vectors (via raw SQL from the AI service) |
+| **Redis** | Cache for the backend only; not a job queue |
+| **React SPA** | Hash-routed research workspace: library, collections, cited chat, report reader, comparisons, themes |
+
+The browser never talks to the AI service or the database directly. The backend authorises each request and passes only scoped IDs to the AI service.
+
+### Document ingestion
+
+```text
+PDF upload ─► NestJS (validate, store, ProcessingJob)
+          ─► POST /ingest : PyMuPDF layout parse → section-aware chunks → paper profile
+          ─► DocumentChunk rows (text, tables, captions, references, profile card)
+          ─► POST /embed  : BAAI/bge-m3 (1024-d, normalised) → pgvector
+          ─► Document = READY        (progress pushed over WebSocket)
+```
+
+### Question answering
+
+```text
+Question + last 20 turns
+  ─► standalone rewrite (follow-ups only)
+  ─► route intent (rule-based section weighting, reference exclusion)
+  ─► facet split (≤ 3 sub-questions) + full question
+  ─► semantic (pgvector cosine) ∥ keyword (ts_rank_cd) per facet
+  ─► Reciprocal Rank Fusion (k = 60)
+  ─► cross-encoder re-rank (one pass, ≤ 20 pairs)
+  ─► evidence pack [Evidence N] ─► Gemini structured output (Pydantic)
+  ─► resolve evidence numbers to stored chunks ─► claim + citation verification
+  ─► backend re-checks scope, renumbers [n], persists Query + Citation rows
+```
+
+If the AI path fails (timeout, quota, missing key), the backend returns a clearly labelled extractive answer built from the retrieved passages. Each line cites the passage it quotes.
 
 ---
 
-# Repository structure
+## Engineering decisions
 
-```text
-DocLens-AI/
-├── frontend/
-│   ├── src/
-│   │   ├── components/       # Reusable UI components
-│   │   ├── contexts/         # Auth and application state
-│   │   ├── pages/            # Workspace, library, chat, comparison, review views
-│   │   ├── services/         # Backend API clients
-│   │   ├── hooks/            # Frontend hooks
-│   │   ├── types/            # Frontend types
-│   │   ├── App.*             # Application shell and routes
-│   │   └── main.*            # Browser entrypoint
-│   ├── Dockerfile
-│   ├── nginx.conf
-│   ├── package.json
-│   └── vite.config.*
-│
-├── backend/
-│   ├── src/
-│   │   ├── auth/             # Registration, login, JWT, guards
-│   │   ├── users/            # User APIs
-│   │   ├── workspaces/       # Workspace APIs
-│   │   ├── collections/      # Collection APIs
-│   │   ├── documents/        # Uploads, document metadata, access checks
-│   │   ├── processing/       # Ingestion and embedding job orchestration
-│   │   ├── query/            # Search, chat, comparisons, literature reviews
-│   │   ├── ai-proxy/         # NestJS-to-FastAPI client
-│   │   ├── gateway/          # WebSocket updates
-│   │   ├── prisma/           # Prisma service and database access
-│   │   ├── common/           # Shared guards, DTOs, and utilities
-│   │   ├── config/           # Environment configuration
-│   │   ├── app.module.ts
-│   │   └── main.ts
-│   ├── prisma/
-│   │   ├── schema.prisma
-│   │   └── migrations/
-│   ├── Dockerfile
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── ai-service/
-│   ├── main.py               # FastAPI endpoints
-│   ├── ingest.py             # PyMuPDF extraction, chunking, embeddings
-│   ├── query.py              # AI use cases: ask, summarize, compare, review
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   ├── rag/
-│   │   ├── chain.py          # Conversational RAG and structured generation
-│   │   ├── retriever.py      # Hybrid candidates, RRF, reranking adapter
-│   │   ├── schemas.py        # Structured answers, claims, citations, reviews
-│   │   ├── verification.py   # Claim and citation validation
-│   │   ├── evaluation.py     # Retrieval and grounding metrics
-│   │   └── test_phase_pipeline.py
-│   └── vector_store/
-│       └── pg_store.py       # PostgreSQL/pgvector persistence and search
-│
-├── docker-compose.yml        # PostgreSQL, Redis, migrations, backend, AI, frontend
-├── package.json              # Workspace commands
-├── .env.example              # Environment variable template
-└── README.md
-```
+Each decision below was made against a measured trade-off. Numbers come from the offline harnesses in `ai-service/eval/`.
+
+| Problem | Decision | Result |
+| --- | --- | --- |
+| Per-facet re-ranking made answers take minutes on CPU | Gather candidates for every facet, fuse with RRF, re-rank once against the full question | Retrieval latency **148.6 s → 22.1 s** (mean, 6 questions, CPU) |
+| Section-level chunks vs. fixed windows | Section-bounded chunks with a `Paper:`/`Section:` contextual header embedded with the text | Held-out Recall@5 **0.688 → 0.875** (16 questions, same retrieval stack) |
+| A rule-based section boost looked helpful with a proxy model | Tuned on a validation set; the boost **reduced** recall with the real cross-encoder, so it defaults to off | Avoided a regression shipped on a weak proxy result |
+| LLM answers can cite passages that were never shown | Model cites `[Evidence N]` only; backend resolves numbers to stored chunks and drops out-of-scope ones | Citations cannot point outside the retrieved set |
+| Off-topic questions still produced answers | BGE-M3 relevance floor (`RETRIEVAL_MIN_SIMILARITY = 0.48`) abstains before the answer prompt | Catches all 6 off-topic test questions with no answerable question lost |
+| Gemini hangs or retries for minutes | Explicit client timeout (60 s), one retry, no retry on quota or timeout errors | Bounded per-call latency; failures surface as a labelled fallback |
+| Re-ingesting a paper invalidated saved citations | Chunk identity by content hash; unchanged chunks keep their ID and vector | Citations survive `reindex.py` |
+| Node `fetch` cut off ingestion at 300 s | Long-running AI calls use `node:http` with a 900 s budget | Large papers no longer marked FAILED mid-embedding |
+| Cross-paper search mixed vectors from different models | Semantic search only compares vectors from the active `EMBEDDING_MODEL` | Model changes can't corrupt similarity scores |
+| Unauthenticated internal service | `X-Internal-Secret` on every AI route; ingest paths restricted to the upload directory | Fixes an exposed-service finding from the security review |
 
 ---
 
-# Document ingestion pipeline
+## Tech stack
 
-Ingestion is intentionally separate from answering questions.
+**Frontend:** React 19, Vite 8, Tailwind CSS 4, hand-written hash router and context state, Socket.IO client, Markdown renderer (no raw HTML injection), light/dark/system themes. Served by Nginx.
 
-```text
-PDF upload
-    │
-    ▼
-NestJS validation and persistent file storage
-    │
-    ▼
-Processing job
-    │
-    ▼
-FastAPI POST /ingest
-    │
-    ▼
-PyMuPDF extraction
-    │
-    ├── Page text and document metadata
-    ├── Section detection
-    ├── Section-aware text chunks
-    ├── Native table evidence
-    └── Figure/caption evidence
-    │
-    ▼
-DocumentChunk records in PostgreSQL
-    │
-    ▼
-FastAPI POST /embed
-    │
-    ▼
-BAAI/bge-m3, 1024 dimensions
-    │
-    ▼
-pgvector + EmbeddingMetadata
-    │
-    ▼
-Document status = READY
-```
+**Backend:** NestJS 11, Prisma 7 with `@prisma/adapter-pg`, Passport JWT, Google Identity Services ID-token verification, class-validator DTOs with a global `ValidationPipe`, Socket.IO gateway, `cache-manager` (Redis), Helmet, Swagger (non-production).
 
-## Evidence representation
+**AI service:** FastAPI + uvicorn, PyMuPDF, `sentence-transformers` (BGE-M3 embeddings, BGE cross-encoder re-ranker), LangChain with Google Gemini (`langchain-google-genai`), Pydantic v2 structured outputs, psycopg2 + pgvector.
 
-Every persisted chunk contains content plus metadata such as:
-
-```json
-{
-  "pageNumber": 7,
-  "chunkIndex": 12,
-  "contentType": "table",
-  "section": "Experiments",
-  "contentHash": "..."
-}
-```
-
-Text chunks preserve page and section context. Native tables are represented as
-searchable Markdown-like content with table indexes. Figure evidence preserves
-the page, caption, image count, and section. This allows answers to identify
-visual evidence and connect it to surrounding paper text.
-
-The base ingestion path records figure evidence and captions; full pixel-level
-interpretation of arbitrary charts, diagrams, and scanned pages is not assumed
-for every document.
+**Infrastructure:** Docker Compose (postgres `pgvector/pgvector:pg16`, redis 7, Prisma migration job, backend, AI service, frontend), shared upload volume, persistent Hugging Face model cache.
 
 ---
 
-# Data model
+## Data model
 
-The canonical schema is in `backend/prisma/schema.prisma`.
-
-```text
-User
- └── Workspace
-      └── Collection
-           └── Document
-                ├── DocumentChunk
-                ├── EmbeddingMetadata
-                ├── ProcessingJob
-                ├── DocumentEntity
-                └── Relationship
-
-User
- ├── ChatSession ── Query ── Citation ── DocumentChunk
- ├── PaperComparison
- ├── LiteratureReview
- ├── ResearchNote
- └── ReadingProgress
-```
-
-Important models:
-
-- `User`: identity, role, authentication, and ownership relationships
-- `Workspace`: top-level research environment
-- `Collection`: thematic grouping of documents
-- `Document`: uploaded PDF metadata and processing state
-- `DocumentChunk`: persistent text/table/figure evidence unit
-- `EmbeddingMetadata`: model, dimensions, vector-store, and chunk linkage
-- `ChatSession`, `Query`, and `Citation`: conversational history and traceability
-- `PaperComparison`: multi-paper comparison result
-- `LiteratureReview`: generated review sections and Markdown output
-- `ResearchNote`: user-authored research notes
-- `ReadingProgress`: document reading state
-
-Document processing states include:
+PostgreSQL schema defined in `backend/prisma/schema.prisma`:
 
 ```text
-PENDING → UPLOADED → EXTRACTING → CHUNKING → EMBEDDING → INDEXING → READY
-                                      └──────────────────────────────→ FAILED
+User ─┬─ Workspace ── Collection ── Document ─┬─ DocumentChunk (text / table / figure / reference / profile)
+      │                                       ├─ EmbeddingMetadata
+      │                                       └─ ProcessingJob
+      ├─ ChatSession ── Query ── Citation ──► DocumentChunk
+      ├─ PaperComparison
+      ├─ LiteratureReview
+      ├─ ResearchNote
+      └─ ReadingProgress
 ```
+
+Document states: `PENDING → EXTRACTING → EMBEDDING → READY` (or `FAILED` with an error message).
 
 ---
 
-# RAG architecture
+## Feature overview
 
-```text
-Question and conversation history
-              │
-              ▼
-Conditional standalone-question rewrite
-              │
-              ▼
-Bounded multi-query expansion
-              │
-              ▼
-Query embedding with BGE-M3
-              │
-       ┌──────┴──────┐
-       ▼             ▼
-Semantic search   Keyword search
-       │             │
-       └──────┬──────┘
-              ▼
-Reciprocal Rank Fusion, k = 60
-              │
-              ▼
-BGE cross-encoder reranking
-              │
-              ▼
-Evidence context construction
-              │
-              ▼
-Gemini structured generation
-              │
-              ▼
-Claim verification
-              │
-              ▼
-Citation validation
-              │
-              ▼
-Grounded answer with citations
-```
+| Area | Implemented |
+| --- | --- |
+| Accounts | Register, login, Google sign-in, profile update, JWT with per-request user lookup |
+| Library | Workspaces, collections, paper library, dashboard counts, reading progress, notes |
+| Ingestion | PDF upload (≤ 50 MB, validated), background processing with live status, PDF download |
+| Q&A | Multi-paper chat with follow-up rewriting, cited answers, insufficient-evidence and unverified-claim flags, persisted sessions, cancel mid-query |
+| Synthesis | Paper comparison, literature review with comparison matrix, research-gap analysis (returned, not stored), single-paper summary |
+| Reading | Literature reviews and comparisons in a report reader with clickable sources and verification summary, Markdown and simple PDF export |
+| Evaluation | `/evaluate` endpoint, offline retrieval and answer-quality harnesses, 16-question gold set |
 
-## Retrieval stages
-
-### Semantic retrieval
-
-The question is embedded with `BAAI/bge-m3` and compared with chunk vectors in
-pgvector. This handles conceptually similar wording.
-
-### Keyword retrieval
-
-The chunk text is searched for exact terms. This is important for model names,
-dataset names, acronyms, equations, identifiers, and numeric table values.
-
-### Reciprocal Rank Fusion
-
-Independent semantic and keyword candidate lists are combined using:
-
-```text
-RRF contribution = 1 / (60 + rank)
-```
-
-Chunks present in both lists receive contributions from both retrieval signals.
-Source and rank provenance are preserved in the result metadata.
-
-### Cross-encoder reranking
-
-The fused candidates are scored with:
-
-```text
-BAAI/bge-reranker-v2-m3
-```
-
-The reranker evaluates the complete `(question, chunk)` pair before final
-top-K evidence selection.
+**Not implemented:** OCR for scanned PDFs, figure pixel analysis, a knowledge-graph pipeline (the schema and an extractor exist, but nothing calls them), role-based access enforcement.
 
 ---
 
-# Evidence-grounded generation
+## Testing
 
-Retrieved chunks are converted into explicit evidence blocks:
+| Suite | Command | Coverage |
+| --- | --- | --- |
+| Python (AI service) | `python -m pytest ai-service/rag -q` | Chunking, routing, retrieval, citation resolution, claim verification, synthesis verifier, streaming, internal auth. **77 passing** (2026-10-23) |
+| Backend (Jest) | `npm --prefix backend run test` | Auth, Google sign-in, query service (citation alignment, cross-user isolation, timeouts, stream relay), AI proxy long-request handling |
+| Quality (offline) | `python ai-service/eval/retrieval_eval.py` | Recall@K, MRR, citation-window hit rate on real PDFs |
+| Quality (live) | `python ai-service/eval/answer_eval.py` | Citation resolution and claim verification against live Gemini |
 
-```text
-[Evidence 1]
-chunk_id: ...
-document_id: ...
-document_title: ...
-page: 8
-evidence_type: table
-section: Experiments
----
-Original chunk content
-```
-
-Gemini receives the evidence, question, and conversation context through the
-structured LangChain pipeline. The generation schema requires:
-
-- Claims to be supported by retrieved evidence
-- Exact chunk and document identifiers
-- Near-verbatim source excerpts
-- Explicit insufficient-evidence responses
-- Preservation of table labels and values
-- Separation of visible figure observations from author-reported conclusions
-
-The AI response is parsed into typed Pydantic models rather than treated as
-unstructured text.
+Tests use fakes for PostgreSQL and do not exercise pgvector SQL against a running database. The BGE models are exercised only by the evaluation scripts. End-to-end checks were run manually on the Docker stack.
 
 ---
 
-# Citation and claim verification
+## Getting started
 
-The verification layer runs after generation.
+Requirements: Docker with Compose, a Google Gemini API key (optional, for LLM features), and several GB of disk for the Hugging Face models downloaded on first start.
 
-```text
-Generated answer
-      │
-      ▼
-Extract claims and citations
-      │
-      ▼
-Check chunk/document identity
-      │
-      ▼
-Check non-empty source text
-      │
-      ▼
-Check source-text overlap
-      │
-      ▼
-Reject or remove unsupported citations/claims
-      │
-      ▼
-Persist final answer and citations
-```
-
-Validation rejects unknown chunk IDs, empty source excerpts, and citations with
-insufficient overlap against the retrieved source content. Evaluation tracks
-unsupported-claim rate and citation coverage.
-
----
-
-# Research workflows
-
-## Multi-paper Q&A
-
-Questions can be scoped to a collection or selected document IDs. Access
-control is enforced by NestJS before the AI service is called.
-
-## Paper comparison
-
-The comparison workflow synthesizes selected papers across:
-
-- Methods
-- Datasets
-- Models
-- Metrics
-- Findings
-- Similarities
-- Differences
-- Limitations
-
-## Literature reviews
-
-The literature-review workflow retrieves evidence from selected papers and
-generates structured sections plus Markdown output.
-
-## Knowledge graph data
-
-The schema supports research entities and relationships such as authors,
-concepts, datasets, methods, models, and metrics. Entity and relationship
-queries are available through the AI service. Advanced graph exploration
-features are not part of the core RAG path.
-
----
-
-# AI service API
-
-The FastAPI entrypoint is `ai-service/main.py`.
-
-```text
-GET  /health
-
-POST /ingest
-POST /embed
-GET  /status/{document_id}
-
-POST /search
-POST /search/semantic
-POST /search/chunk
-POST /search/hybrid
-
-POST /ask
-POST /summarise
-POST /review
-POST /compare
-POST /literature-review
-
-POST /kg/entities
-POST /kg/relationships
-
-POST /evaluate
-```
-
-The NestJS backend exposes the public `/api/v1` routes and uses the AI service
-as an internal dependency.
-
----
-
-# Evaluation
-
-The evaluation implementation is in `ai-service/rag/evaluation.py`.
-
-## Retrieval metrics
-
-- Recall@K
-- Mean Reciprocal Rank (MRR)
-- Reranking improvement
-
-## Generation and grounding metrics
-
-- Faithfulness
-- Answer relevance
-- Unsupported-claim rate
-
-## Citation metrics
-
-- Citation correctness
-- Citation precision
-- Citation coverage
-
-## Operational metrics
-
-- Retrieval and generation latency
-- Processing latency
-
-Negative-evidence tests verify that questions with no supporting source
-material produce transparent insufficient-evidence responses instead of
-fabricated claims.
-
----
-
-# Deployment
-
-Docker Compose runs:
-
-```text
-postgres
-redis
-backend-migrate
-backend
-ai-service
-frontend
-```
-
-Startup order:
-
-```text
-PostgreSQL and Redis
-        ↓
-Prisma migrations
-        ↓
-FastAPI AI service
-        ↓
-NestJS backend
-        ↓
-React/Nginx frontend
-```
-
-The AI container caches Hugging Face models in a persistent volume so BGE-M3
-and the reranker are not downloaded on every restart.
-
-Required production configuration includes:
-
-```text
-DATABASE_URL
-POSTGRES_PASSWORD
-JWT_SECRET
-INTERNAL_API_SECRET
-GEMINI_API_KEY
-CORS_ORIGINS
-```
-
-See `.env.example` for the available configuration.
-
----
-
-# Security and reliability boundaries
-
-- The frontend never accesses PostgreSQL directly.
-- The backend owns authentication and collection/document authorization.
-- The AI service is an internal service behind the NestJS control plane.
-- Uploaded PDFs are stored in a persistent backend volume.
-- The AI service mounts uploaded files read-only.
-- DTO validation and access checks occur before AI requests.
-- Processing failures are represented in document/job status rather than
-  silently marking a document ready.
-- Retrieval provenance, page metadata, chunk IDs, and source text are preserved
-  for traceability.
-
----
-
-# Local development
-
-Install JavaScript dependencies:
-
-```powershell
-npm install
-```
-
-Generate the Prisma client:
-
-```powershell
-npm run prisma:generate
-```
-
-Start infrastructure and services:
-
-```powershell
+```bash
+cp .env.example .env     # set JWT_SECRET, POSTGRES_PASSWORD, INTERNAL_API_SECRET, GEMINI_API_KEY
 docker compose up --build
 ```
 
-Useful validation commands:
+Open <http://localhost:8080>. Without `GEMINI_API_KEY`, ingestion still works and answers fall back to extractive passages.
 
-```powershell
-npm run build:all
-npm --prefix backend run test
-python -m compileall -q ai-service
-python -m pytest ai-service\rag\test_phase_pipeline.py -q
-docker compose config
+Local development without Docker for the apps:
+
+```bash
+npm install
+npm run prisma:generate
+npm --prefix backend run prisma:deploy   # needs PostgreSQL + pgvector; set DATABASE_URL in backend/.env
+npm run dev:backend                      # :3001
+npm run dev:frontend                     # Vite, proxies /api and /socket.io
+```
+
+```bash
+cd ai-service
+python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 8000
+```
+
+Configuration reference: [docs/SETUP_AND_DEPLOYMENT.md](docs/SETUP_AND_DEPLOYMENT.md).
+
+---
+
+## Repository layout
+
+```text
+frontend/       React SPA (pages, components, contexts, services, styles) + Nginx config
+backend/        NestJS app (auth, documents, processing, query, gateway, ai-proxy) + Prisma schema and migrations
+ai-service/     FastAPI app: main.py (routes), ingest.py, query.py, rag/ (parser, chunking, retriever, chain, verification, synthesis), vector_store/ (pgvector SQL), eval/
+docs/           Architecture, API, database, RAG pipeline, features, setup, known limitations, pipeline review
+docker-compose.yml
 ```
 
 ---
 
-# Current implementation boundary
+## Documentation
 
-The implemented pipeline is:
+- [Architecture](docs/ARCHITECTURE.md): services, data flows, module layout
+- [API](docs/API.md): REST routes, WebSocket events, AI service endpoints
+- [Database](docs/DATABASE.md): Prisma schema, pgvector, migrations
+- [RAG pipeline](docs/RAG_PIPELINE.md): parsing, chunking, retrieval, generation, verification, measured results
+- [Features](docs/FEATURES.md): implemented features with source locations and status
+- [Setup and deployment](docs/SETUP_AND_DEPLOYMENT.md): environment variables, Docker, production checklist
+- [Known limitations](docs/KNOWN_LIMITATIONS.md): open security and correctness findings, technical debt
 
-```text
-Ingestion
-→ Embeddings
-→ Hybrid retrieval
-→ RRF
-→ Cross-encoder reranking
-→ Multi-query retrieval
-→ Evidence construction
-→ Gemini structured generation
-→ Citation validation
-→ Claim verification
-→ Evaluation
-```
+---
 
-The architecture avoids adding separate orchestration frameworks, a second
-vector database, or heavyweight document-processing dependencies. The main
-quality boundary is the evidence metadata preserved from ingestion through the
-final answer.
+## Known limitations
+
+- Processing runs in-process with no retry. A backend restart during ingestion leaves the document stuck until re-uploaded.
+- Claim verification is lexical (token containment and number matching). It catches unsupported claims but not semantically wrong ones.
+- No OCR. Scanned or image-only PDFs fail with "No extractable text".
+- Rate limiting is configured but not enforced on auth routes. The AI service must not be exposed publicly without `INTERNAL_API_SECRET`.
+- Role-based access (`admin`/`viewer`) is defined but not enforced.
+
+Full list with file references: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md).
+
+---
+
+## Author
+
+**Aishwary Vansh** · [GitHub](https://github.com/aishwary-vansh)

@@ -1,8 +1,25 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { AiProxyService } from '../ai-proxy/ai-proxy.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type RetrievalMode = 'vector';
+
+export type AskOptions = {
+  /** Receives AI pipeline stages (loading_models, retrieving, generating, verifying, fallback). */
+  onStage?: (stage: string) => void;
+  /** Aborted when the client disconnects; nothing is persisted then. */
+  signal?: AbortSignal;
+  /** Client-generated id that makes retries of the same question idempotent. */
+  clientRequestId?: string;
+};
 
 type Evidence = {
   chunkId: string;
@@ -16,6 +33,40 @@ type Evidence = {
 
 type CitationDto = Evidence & {
   retrievalPath?: string[];
+};
+
+/** Which chunks a user may be shown as citations for one request. */
+/** Answer labels kept in Query.rawRequest.answerMeta (no schema change). */
+type AnswerMeta = {
+  background?: string;
+  evidenceConflict?: boolean;
+  abstainReason?: string;
+  insufficientEvidence?: boolean;
+};
+
+// Gemini quota / rate limit / rejected key, as reported by the AI service.
+const AI_UNAVAILABLE = /resourceexhausted|quota|rate.?limit|429|permissiondenied|api key not valid|unauthenticated/i;
+
+const FALLBACK_REASON: Record<'timeout' | 'unavailable' | 'error', string> = {
+  timeout: 'The AI answer took too long',
+  unavailable: 'The AI model is unavailable right now (quota or API key)',
+  error: 'The AI answer service is unavailable',
+};
+
+/** Labels for a stored answer; rows saved before answerMeta existed fall back to "no citations". */
+function storedAnswerFields(rawRequest: unknown, citationCount: number) {
+  const meta = ((rawRequest as any)?.answerMeta ?? {}) as AnswerMeta;
+  return {
+    insufficient_evidence: meta.insufficientEvidence ?? !citationCount,
+    evidence_conflict: meta.evidenceConflict ?? false,
+    background: meta.background ?? null,
+  };
+}
+
+type CitationScope = {
+  userId?: string;
+  collectionId?: string;
+  documentIds?: string[];
 };
 
 type ReviewSection = {
@@ -79,6 +130,8 @@ const REVIEW_BLUEPRINT: Array<{ key: string; heading: string; focus: string; key
 @Injectable()
 export class QueryService {
   private readonly logger = new Logger(QueryService.name);
+  /** Answers still being computed, keyed by user + clientRequestId. */
+  private readonly inflightAsks = new Map<string, Promise<any>>();
 
   constructor(
     private readonly ai: AiProxyService,
@@ -93,10 +146,45 @@ export class QueryService {
     topK = 5,
     retrievalMode: RetrievalMode = 'vector',
     documentIds?: string[],
+    opts: AskOptions = {},
   ) {
     if (!question?.trim()) throw new BadRequestException('Question is required');
-    await this.assertCollectionAccess(collectionId, userId);
 
+    // Idempotent retries: the same clientRequestId never triggers a second AI
+    // call or a second Query row, whether the first is still running or done.
+    // The in-flight entry is registered before any await so two concurrent
+    // duplicates cannot both get past this check.
+    const requestKey = opts.clientRequestId ? `${userId}:${opts.clientRequestId}` : undefined;
+    const running = requestKey ? this.inflightAsks.get(requestKey) : undefined;
+    if (running) return running;
+
+    const work = (async () => {
+      await this.assertCollectionAccess(collectionId, userId);
+      if (opts.clientRequestId) {
+        const replay = await this.findReplayedAnswer(userId, opts.clientRequestId);
+        if (replay) return replay;
+      }
+      return this.runAsk(question, collectionId, userId, sessionId, topK, retrievalMode, documentIds, opts);
+    })();
+    if (!requestKey) return work;
+    this.inflightAsks.set(requestKey, work);
+    try {
+      return await work;
+    } finally {
+      this.inflightAsks.delete(requestKey);
+    }
+  }
+
+  private async runAsk(
+    question: string,
+    collectionId: string,
+    userId: string,
+    sessionId: string | undefined,
+    topK: number,
+    retrievalMode: RetrievalMode,
+    documentIds: string[] | undefined,
+    opts: AskOptions,
+  ) {
     const session = await this.resolveChatSession(userId, collectionId, sessionId, question);
 
     const historyQueries = await this.prisma.query.findMany({
@@ -110,38 +198,69 @@ export class QueryService {
       { role: 'model', content: q.answer || '' }
     ]);
 
-    const evidence = await this.retrieveEvidence(question, collectionId, userId, topK, documentIds);
-    if (!evidence.length) {
-      throw new BadRequestException(
-        'No citation-backed evidence was found. Upload indexed papers before asking this question.',
-      );
-    }
+    if (documentIds?.length) await this.assertDocumentsInCollection(documentIds, collectionId, userId);
+    const scope: CitationScope = { userId, collectionId, documentIds };
 
     const startedAt = Date.now();
     let answer = '';
-    let citations = this.citationsFromEvidence(evidence);
+    let citations: CitationDto[] = [];
     let modelUsed = 'extractive-citation-fallback';
+    let verification: { claims?: any[]; confidence?: number; insufficientEvidence?: boolean } = {};
+    let aiAnswered = false;
+    let aiTimedOut = false;
+    let aiTimings: Record<string, number> | undefined;
+    // Shown with the answer and stored so a reloaded session shows the same labels.
+    let answerMeta: AnswerMeta = {};
+    let aiFailure: 'timeout' | 'unavailable' | 'error' | undefined;
 
     try {
-      const raw: any = await this.ai.ask(
-        question,
-        collectionId,
-        session.id,
-        topK,
-        'vector',
-        documentIds,
-        history,
-      );
-      const rawCitations = await this.normalizeAiCitations(raw.citations ?? [], evidence);
-      citations = rawCitations.length ? rawCitations : citations;
-      answer = String(raw.answer ?? raw.content ?? '').trim();
-      modelUsed = raw.model_used ?? modelUsed;
+      const payload = { question, collectionId, sessionId: session.id, topK, documentIds, history };
+      const raw: any = opts.onStage
+        ? await this.ai.askStream(payload, opts.onStage, opts.signal)
+        : await this.ai.ask(question, collectionId, session.id, topK, 'vector', documentIds, history, opts.signal);
+      aiTimings = raw.timings_ms;
+      const aligned = await this.alignAiCitations(raw.citations ?? [], scope);
+      citations = aligned.citations;
+      answer = this.remapMarkers(String(raw.answer ?? raw.content ?? '').trim(), aligned.mapping);
+      modelUsed = raw.model_used ?? 'gemini-rag';
+      verification = {
+        claims: raw.claims,
+        confidence: raw.confidence,
+        // An answer whose citations could not be resolved is not evidence-backed.
+        insufficientEvidence: Boolean(raw.insufficient_evidence) || !citations.length,
+      };
+      answerMeta = {
+        background: typeof raw.background === 'string' && raw.background.trim() ? raw.background.trim() : undefined,
+        evidenceConflict: Boolean(raw.evidence_conflict) || undefined,
+        abstainReason: raw.abstain_reason ?? undefined,
+        insufficientEvidence: verification.insufficientEvidence || undefined,
+      };
+      aiAnswered = Boolean(answer);
     } catch (err: any) {
+      // A client that went away gets nothing persisted: no stale or duplicate rows.
+      if (opts.signal?.aborted) throw new HttpException('Request cancelled', 499);
+      aiTimedOut = err?.status === HttpStatus.GATEWAY_TIMEOUT;
+      aiFailure = aiTimedOut ? 'timeout' : AI_UNAVAILABLE.test(String(err?.message ?? '')) ? 'unavailable' : 'error';
       this.logger.warn('AI ask failed; using citation-backed local answer: %s', err.message);
     }
 
-    if (!answer) answer = this.composeAnswer(question, evidence);
-    answer = this.ensureAnswerHasCitationRefs(answer, citations);
+    if (!aiAnswered) {
+      // Degraded mode: show the most relevant passages, each cited by its own marker.
+      // After a timeout, skip the AI /search too (same slow models) and rank locally.
+      opts.onStage?.('fallback');
+      const evidence = await this.retrieveEvidence(question, collectionId, userId, topK, documentIds, !aiTimedOut);
+      if (!evidence.length) {
+        throw new BadRequestException(
+          'No citation-backed evidence was found. Upload indexed papers before asking this question.',
+        );
+      }
+      const fallback = this.composeCitedAnswer(question, evidence, aiFailure);
+      answer = fallback.answer;
+      citations = fallback.citations;
+      modelUsed = 'extractive-citation-fallback';
+      verification = { claims: [], confidence: 0, insufficientEvidence: false };
+      answerMeta = {};
+    }
 
     const query = await this.persistQuery({
       sessionId: session.id,
@@ -150,9 +269,16 @@ export class QueryService {
       modelUsed,
       processingMs: Date.now() - startedAt,
       retrievalMode,
-      rawRequest: { topK, documentIds },
+      rawRequest: {
+        topK,
+        documentIds,
+        ...(opts.clientRequestId ? { clientRequestId: opts.clientRequestId } : {}),
+        ...(Object.values(answerMeta).some((v) => v !== undefined) ? { answerMeta } : {}),
+      },
       citations,
+      allowUncited: Boolean(verification.insufficientEvidence),
     });
+    if (aiTimings) this.logger.log(`ask ${query.id} AI stage timings (ms): ${JSON.stringify(aiTimings)}`);
 
     return {
       id: query.id,
@@ -164,6 +290,48 @@ export class QueryService {
       model_used: modelUsed,
       retrieval_mode: retrievalMode,
       session_id: session.id,
+      claims: verification.claims ?? [],
+      confidence: verification.confidence,
+      insufficient_evidence: verification.insufficientEvidence ?? false,
+      evidence_conflict: answerMeta.evidenceConflict ?? false,
+      background: answerMeta.background ?? null,
+      abstain_reason: answerMeta.abstainReason ?? null,
+      ai_failure: aiFailure ?? null,
+      timings_ms: aiTimings,
+    };
+  }
+
+  /** A finished answer for this user's clientRequestId, rebuilt from the stored rows. */
+  private async findReplayedAnswer(userId: string, clientRequestId: string) {
+    const query = await this.prisma.query.findFirst({
+      where: {
+        chatSession: { userId },
+        rawRequest: { path: ['clientRequestId'], equals: clientRequestId },
+      },
+      include: { citations: { include: { chunk: { include: { document: true } } } } },
+    });
+    if (!query) return null;
+    return {
+      id: query.id,
+      role: 'assistant' as const,
+      content: query.answer ?? '',
+      citations: query.citations.map((citation: any) => ({
+        chunkId: citation.chunkId,
+        documentId: citation.chunk.documentId,
+        documentTitle: citation.documentTitle ?? citation.chunk.document.title,
+        pageNumber: citation.pageNumber ?? citation.chunk.pageNumber,
+        chunkIndex: citation.chunk.chunkIndex,
+        chunk: citation.sourceText ?? citation.chunk.content.slice(0, 700),
+        score: citation.relevance ?? 0,
+      })),
+      timestamp: query.createdAt.toISOString(),
+      latency_ms: query.processingMs ?? 0,
+      model_used: query.modelUsed,
+      retrieval_mode: query.retrievalMode,
+      session_id: query.chatSessionId,
+      claims: [],
+      ...storedAnswerFields(query.rawRequest, query.citations.length),
+      replayed: true,
     };
   }
 
@@ -246,6 +414,7 @@ export class QueryService {
             score: citation.relevance ?? 0,
             retrievalPath: ['postgres-chunks'],
           })),
+          ...storedAnswerFields(query.rawRequest, query.citations.length),
         },
       ]),
     };
@@ -291,6 +460,7 @@ export class QueryService {
     userId?: string,
   ) {
     if (userId) await this.assertCollectionAccess(collectionId, userId);
+    if (userId && documentIds?.length) await this.assertDocumentsInCollection(documentIds, collectionId, userId);
     return this.ai.hybridSearch(query, collectionId, topK, documentIds);
   }
 
@@ -309,6 +479,27 @@ export class QueryService {
       throw new BadRequestException('This paper has no indexed chunks to summarize.');
     }
 
+    try {
+      // Structured, evidence-linked paper profile built by the AI service at ingest.
+      const result: any = await this.ai.summarise(documentId);
+      if (result?.summary) {
+        const aligned = await this.alignAiCitations(result.citations ?? [], {
+          userId,
+          documentIds: [documentId],
+        });
+        return {
+          document_id: documentId,
+          summary: this.remapMarkers(result.summary, aligned.mapping),
+          profile: result.profile ?? null,
+          outline: result.outline ?? [],
+          abstract: result.abstract ?? '',
+          citations: aligned.citations,
+        };
+      }
+    } catch (e) {
+      this.logger.warn(`AI summarise failed, falling back to leading chunks: ${e}`);
+    }
+
     const evidence = document.chunks.slice(0, 5).map((chunk, index) => ({
       chunkId: chunk.id,
       documentId: document.id,
@@ -321,8 +512,7 @@ export class QueryService {
 
     return {
       document_id: documentId,
-      summary: this.ensureAnswerHasCitationRefs(this.composeAnswer('Summarize this paper', evidence), evidence),
-      citations: this.citationsFromEvidence(evidence),
+      ...this.summaryFallback(evidence),
     };
   }
 
@@ -349,7 +539,7 @@ export class QueryService {
     }
 
     const documents = await this.getAccessibleDocuments(documentIds, userId);
-    const resolvedCollectionId = collectionId ?? documents[0]?.collectionId;
+    const resolvedCollectionId = this.sharedCollectionId(documents, collectionId);
     if (userId && resolvedCollectionId) await this.assertCollectionAccess(resolvedCollectionId, userId);
 
     const title = this.comparisonTitle(documents, question);
@@ -357,9 +547,12 @@ export class QueryService {
     
     try {
       result = await this.ai.compareDocuments(documentIds, resolvedCollectionId, question, topK);
-      if (result.citations) {
-        result.citations = await this.normalizeAiCitations(result.citations, []);
-      }
+      const aligned = await this.alignAiCitations(result.citations ?? [], { userId, documentIds });
+      result = this.remapResultMarkers(result, aligned.mapping, [
+        'answer', 'narrative', 'methods', 'datasets', 'strengths', 'weaknesses',
+        'findings', 'futureWork', 'agreements', 'disagreements',
+      ]);
+      result.citations = aligned.citations;
     } catch (e) {
       this.logger.warn(`AI compare failed, falling back to local: ${e}`);
       const evidence = await this.retrieveEvidenceForDocuments(
@@ -386,10 +579,10 @@ export class QueryService {
         weaknesses: sections.weaknesses.map((item) => item.text),
         findings: sections.findings.map((item) => item.text),
         futureWork: sections.futureWork.map((item) => item.text),
-        narrative: this.ensureAnswerHasCitationRefs(
-          `Compared ${documents.length} papers across methods, datasets, strengths, weaknesses, findings, and future work.`,
-          this.citationsFromEvidence(evidence.slice(0, 5))
-        ),
+        narrative:
+          `The AI comparison service is unavailable. Below are keyword-matched passages from the ${documents.length} ` +
+          'selected papers, grouped by aspect; they are not a synthesized comparison.',
+        degraded: true,
         sections,
         citations: this.citationsFromEvidence(evidence.slice(0, 5)),
       };
@@ -442,8 +635,38 @@ export class QueryService {
   }) {
     if (!input.documentIds?.length) throw new BadRequestException('Select papers for the literature review.');
     const documents = await this.getAccessibleDocuments(input.documentIds, input.userId);
-    const collectionId = input.collectionId ?? documents[0]?.collectionId;
+    const sharedCollectionId = this.sharedCollectionId(documents, input.collectionId);
+    const collectionId = sharedCollectionId ?? documents[0]?.collectionId;
     if (collectionId) await this.assertCollectionAccess(collectionId, input.userId);
+
+    const synthesised = await this.synthesiseReview(input.documentIds, sharedCollectionId, input.topic, input.userId);
+    if (synthesised) {
+      const title = input.title?.trim() || synthesised.title;
+      const payload = {
+        title,
+        topic: input.topic,
+        documentIds: input.documentIds,
+        documentTitles: documents.map((document) => document.title),
+        sections: synthesised.sections,
+        citations: synthesised.citations,
+        paperMatrix: synthesised.paperMatrix,
+        themes: synthesised.themes,
+        verification: synthesised.verification,
+      };
+      const markdown = synthesised.markdown || this.markdownForReview(payload);
+      const saved = await this.prisma.literatureReview.create({
+        data: {
+          title,
+          topic: input.topic,
+          documentIds: input.documentIds,
+          sections: synthesised.sections as any,
+          markdown,
+          userId: input.userId,
+          collectionId,
+        },
+      });
+      return { id: saved.id, createdAt: saved.createdAt, ...payload, markdown };
+    }
 
     const sections: Record<string, ReviewSection> = {};
     const allCitations: CitationDto[] = [];
@@ -456,8 +679,12 @@ export class QueryService {
       try {
         const prompt = `Write a comprehensive literature review section titled "${spec.heading}" focusing on: ${spec.focus}. Synthesize the findings across the provided papers context. Do not dump chunks, explain the concepts clearly.`;
         const response: any = await this.ai.ask(prompt, collectionId, undefined, 7, 'vector', input.documentIds);
-        content = response.answer;
-        citations = await this.normalizeAiCitations(response.citations ?? [], []);
+        const aligned = await this.alignAiCitations(response.citations ?? [], {
+          userId: input.userId,
+          documentIds: input.documentIds,
+        });
+        citations = aligned.citations;
+        content = this.remapMarkers(String(response.answer ?? ''), aligned.mapping);
       } catch (e) {
         this.logger.warn(`AI summarize for ${spec.heading} failed, falling back: ${e}`);
         const evidence = await this.retrieveEvidenceForDocuments(input.documentIds, input.userId, queryStr, 7);
@@ -502,6 +729,106 @@ export class QueryService {
     });
 
     return { id: saved.id, createdAt: saved.createdAt, ...payload, markdown };
+  }
+
+  /**
+   * One map-reduce synthesis call in the AI service (paper profiles + balanced
+   * evidence → thematic review). Returns null so the caller can fall back to
+   * the per-section `/ask` loop when the AI service is unavailable.
+   */
+  private async synthesiseReview(
+    documentIds: string[],
+    collectionId: string | undefined,
+    topic: string | undefined,
+    userId: string,
+  ) {
+    try {
+      const result: any = await this.ai.generateLiteratureReview(collectionId, documentIds, topic);
+      if (!result?.sections || !Object.keys(result.sections).length || result.insufficient_evidence) return null;
+
+      // Section markers ([n]) index the global citation list.
+      const scope: CitationScope = { userId, documentIds };
+      const global = await this.alignAiCitations(result.citations ?? [], scope);
+      const sections: Record<string, ReviewSection> = {};
+      for (const spec of REVIEW_BLUEPRINT) {
+        const section = result.sections[spec.key];
+        const own = await this.alignAiCitations(section?.citations ?? [], scope);
+        sections[spec.key] = {
+          heading: section?.heading ?? spec.heading,
+          content: section?.content
+            ? this.remapMarkers(section.content, global.mapping)
+            : `No sufficient information was found in the selected papers to synthesize the ${spec.heading} section.`,
+          citations: own.citations,
+        };
+      }
+      // The AI markdown numbers its Sources list; rebuild it if any citation was dropped.
+      const markdownIntact = global.citations.length === (result.citations ?? []).length;
+      return {
+        title: String(result.title || `${topic?.trim() || 'Research'} Literature Review`),
+        sections,
+        citations: global.citations,
+        paperMatrix: result.paperMatrix ?? [],
+        themes: result.themes ?? [],
+        // Lexical check of each cited sentence against its source (AI service).
+        verification: result.verification ?? null,
+        markdown: markdownIntact ? String(result.markdown ?? '') : '',
+      };
+    } catch (e) {
+      this.logger.warn(`AI literature review synthesis failed, using per-section fallback: ${e}`);
+      return null;
+    }
+  }
+
+  async researchGaps(input: {
+    documentIds?: string[];
+    collectionId?: string;
+    topic?: string;
+    maxGaps?: number;
+    userId: string;
+  }) {
+    let documentIds = input.documentIds ?? [];
+    let collectionId = input.collectionId;
+    let aiCollectionId = collectionId;
+    if (documentIds.length) {
+      // getAccessibleDocuments throws unless every id belongs to this user.
+      const documents = await this.getAccessibleDocuments(documentIds, input.userId);
+      aiCollectionId = this.sharedCollectionId(documents, collectionId);
+      collectionId = collectionId ?? documents[0]?.collectionId;
+    }
+    if (!collectionId) throw new BadRequestException('Select a collection or papers for gap analysis.');
+    await this.assertCollectionAccess(collectionId, input.userId);
+
+    const result: any = await this.ai.researchGaps(
+      documentIds.length ? aiCollectionId : collectionId,
+      documentIds.length ? documentIds : undefined,
+      input.topic,
+      input.maxGaps,
+    );
+
+    const scope: CitationScope = documentIds.length
+      ? { userId: input.userId, documentIds }
+      : { userId: input.userId, collectionId };
+    const global = await this.alignAiCitations(result.citations ?? [], scope);
+    const remap = (text: unknown) => (typeof text === 'string' ? this.remapMarkers(text, global.mapping) : text);
+    const gaps = [];
+    for (const gap of result.gaps ?? []) {
+      const own = await this.alignAiCitations(gap.citations ?? [], scope);
+      gaps.push({
+        ...gap,
+        description: remap(gap.description),
+        rationale: remap(gap.rationale),
+        citations: own.citations,
+        grounded: Boolean(gap.grounded) && own.citations.length > 0,
+      });
+    }
+    return {
+      ...result,
+      collectionId,
+      summary: remap(result.summary),
+      consensus: (result.consensus ?? []).map(remap),
+      gaps,
+      citations: global.citations,
+    };
   }
 
   async listLiteratureReviews(userId: string, collectionId?: string) {
@@ -597,7 +924,11 @@ export class QueryService {
     };
   }
 
-  async pipelineStatus(documentId: string) {
+  async pipelineStatus(documentId: string, userId: string) {
+    const owned = await this.prisma.document.count({
+      where: { id: documentId, collection: { workspace: { userId } } },
+    });
+    if (!owned) throw new NotFoundException('Document not found');
     const job = await this.prisma.processingJob.findFirst({
       where: { documentId },
       orderBy: { createdAt: 'desc' },
@@ -669,6 +1000,7 @@ export class QueryService {
     userId?: string,
     topK = 5,
     documentIds?: string[],
+    useAiSearch = true,
   ): Promise<Evidence[]> {
     if (documentIds?.length && userId) {
       const allowed = await this.prisma.document.count({
@@ -683,13 +1015,15 @@ export class QueryService {
       }
     }
 
-    try {
-      const raw = await this.ai.search(query, collectionId, Math.max(topK, 8), 'vector', documentIds);
-      const results = Array.isArray(raw) ? raw : raw?.results ?? [];
-      const evidence = this.evidenceFromAiResults(results, topK);
-      if (evidence.length) return evidence;
-    } catch (err: any) {
-      this.logger.warn('AI hybrid retrieval failed; falling back to local keyword ranking: %s', err.message);
+    if (useAiSearch) {
+      try {
+        const raw = await this.ai.search(query, collectionId, Math.max(topK, 8), 'vector', documentIds);
+        const results = Array.isArray(raw) ? raw : raw?.results ?? [];
+        const evidence = this.evidenceFromAiResults(results, topK);
+        if (evidence.length) return evidence;
+      } catch (err: any) {
+        this.logger.warn('AI hybrid retrieval failed; falling back to local keyword ranking: %s', err.message);
+      }
     }
 
     const chunks = await this.prisma.documentChunk.findMany({
@@ -802,29 +1136,6 @@ export class QueryService {
     return [...new Set(terms.filter((term) => !STOPWORDS.has(term)))].slice(0, 24);
   }
 
-  private composeAnswer(question: string, evidence: Evidence[]): string {
-    const lower = question.toLowerCase();
-    const keywords = lower.includes('dataset')
-      ? ['dataset', 'data', 'corpus', 'benchmark']
-      : lower.includes('method')
-        ? ['method', 'methodology', 'model', 'architecture', 'training']
-        : lower.includes('limit')
-          ? ['limitation', 'however', 'challenge', 'future work']
-          : lower.includes('future')
-            ? ['future', 'future work', 'extend', 'direction']
-            : ['contribution', 'propose', 'result', 'show', 'approach'];
-
-    const bullets = this.sectionBullets(evidence, keywords, 3);
-    if (!bullets.length) {
-      return evidence
-        .slice(0, 3)
-        .map((item, index) => `Evidence ${index + 1}: ${this.bestSentence(item.chunk, keywords)} [${index + 1}]`)
-        .join('\n');
-    }
-
-    return bullets.map((item, index) => `${item.text} [${index + 1}]`).join('\n');
-  }
-
   private sectionBullets(evidence: Evidence[], keywords: string[], limit: number) {
     return this.preferKeywordEvidence(evidence, keywords, limit).map((item, index) => ({
       text: this.bestSentence(item.chunk, keywords),
@@ -871,45 +1182,134 @@ export class QueryService {
     }));
   }
 
-  private async normalizeAiCitations(raw: any[], fallback: Evidence[]): Promise<CitationDto[]> {
+  /**
+   * Resolve AI citations to chunks the user may see, keeping their order.
+   *
+   * AI text cites `[n]` by position in its citation list. A citation whose
+   * chunk is missing (e.g. re-indexed) or outside `scope` is dropped, and
+   * `mapping` records old position -> new position so markers can be
+   * rewritten. Other evidence is never substituted for a dropped citation.
+   */
+  private async alignAiCitations(
+    raw: any[],
+    scope: CitationScope,
+  ): Promise<{ citations: CitationDto[]; mapping: Map<number, number> }> {
+    const ids = raw.map((c) => c?.chunk_id ?? c?.chunkId).filter(Boolean);
+    const chunks = ids.length
+      ? await this.prisma.documentChunk.findMany({
+          where: {
+            id: { in: ids },
+            document: {
+              ...(scope.documentIds?.length ? { id: { in: scope.documentIds } } : {}),
+              ...(scope.collectionId ? { collectionId: scope.collectionId } : {}),
+              ...(scope.userId ? { collection: { workspace: { userId: scope.userId } } } : {}),
+            },
+          },
+          include: { document: true },
+        })
+      : [];
+    const byId = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+
     const citations: CitationDto[] = [];
-
-    for (const citation of raw) {
-      const chunkId = citation.chunk_id ?? citation.chunkId;
-      const documentId = citation.document_id ?? citation.documentId;
-      const chunkIndex = citation.chunk_index ?? citation.chunkIndex;
-      if (!chunkId && (!documentId || chunkIndex === undefined)) continue;
-
-      const chunk = chunkId
-        ? await this.prisma.documentChunk.findUnique({
-            where: { id: chunkId },
-            include: { document: true },
-          })
-        : await this.prisma.documentChunk.findUnique({
-            where: { documentId_chunkIndex: { documentId, chunkIndex } },
-            include: { document: true },
-          });
-      if (!chunk) continue;
-
-      citations.push({
-        chunkId: chunk.id,
-        documentId: chunk.documentId,
-        documentTitle: citation.document_title ?? citation.documentTitle ?? chunk.document.title,
-        pageNumber: citation.page_number ?? citation.pageNumber ?? chunk.pageNumber,
-        chunkIndex: chunk.chunkIndex,
-        chunk: citation.chunk_text ?? citation.chunk ?? this.snippet(chunk.content, 850),
-        score: Number(citation.score ?? 0.8),
-        retrievalPath: citation.retrieval_path ?? citation.retrievalPath ?? ['vector'],
-      });
-    }
-
-    return citations.length ? citations : this.citationsFromEvidence(fallback);
+    const mapping = new Map<number, number>();
+    const position = new Map<string, number>();
+    raw.forEach((citation, index) => {
+      const chunk = byId.get(citation?.chunk_id ?? citation?.chunkId);
+      if (!chunk) {
+        this.logger.warn(`Dropped AI citation ${index + 1}: chunk missing or outside the request scope`);
+        return;
+      }
+      if (!position.has(chunk.id)) {
+        citations.push({
+          chunkId: chunk.id,
+          documentId: chunk.documentId,
+          documentTitle: chunk.document.title,
+          pageNumber: chunk.pageNumber ?? citation.page_number ?? citation.pageNumber,
+          chunkIndex: chunk.chunkIndex,
+          chunk:
+            citation.sourceText ??
+            citation.source_text ??
+            citation.chunk_text ??
+            citation.chunk ??
+            this.snippet(chunk.content, 850),
+          score: Number(citation.score ?? citation.relevance ?? 0),
+          retrievalPath: citation.retrieval_path ?? citation.retrievalPath ?? ['hybrid-rerank'],
+        });
+        position.set(chunk.id, citations.length);
+      }
+      mapping.set(index + 1, position.get(chunk.id)!);
+    });
+    return { citations, mapping };
   }
 
-  private ensureAnswerHasCitationRefs(answer: string, citations: CitationDto[] | Evidence[]) {
-    if (!citations.length) return '';
-    if (/\[\d+\]/.test(answer)) return answer;
-    return `${answer.trim()} [1]`;
+  /** Rewrite `[n]` markers using an alignment mapping; markers without a surviving citation are removed. */
+  private remapMarkers(text: string, mapping: Map<number, number>): string {
+    if (!text) return text;
+    return text.replace(/\[(\d+)\]/g, (_marker, n) => {
+      const target = mapping.get(Number(n));
+      return target ? `[${target}]` : '';
+    });
+  }
+
+  private remapResultMarkers(result: any, mapping: Map<number, number>, keys: string[]) {
+    const out = { ...result };
+    for (const key of keys) {
+      const value = out[key];
+      if (typeof value === 'string') out[key] = this.remapMarkers(value, mapping);
+      else if (Array.isArray(value)) {
+        out[key] = value.map((item) => (typeof item === 'string' ? this.remapMarkers(item, mapping) : item));
+      }
+    }
+    return out;
+  }
+
+  /** The collection every document belongs to, or undefined when they span collections. */
+  private sharedCollectionId(documents: { collectionId: string }[], requested?: string) {
+    const ids = new Set(documents.map((document) => document.collectionId));
+    if (ids.size !== 1) return undefined;
+    const only = [...ids][0];
+    return !requested || requested === only ? only : undefined;
+  }
+
+  private async assertDocumentsInCollection(documentIds: string[], collectionId: string, userId: string) {
+    const allowed = await this.prisma.document.count({
+      where: { id: { in: documentIds }, collectionId, collection: { workspace: { userId } } },
+    });
+    if (allowed !== new Set(documentIds).size) {
+      throw new ForbiddenException('One or more selected papers are not accessible.');
+    }
+  }
+
+  /** Extractive fallback: each line cites exactly the passage it was taken from. */
+  private composeCitedAnswer(
+    question: string,
+    evidence: Evidence[],
+    failure?: 'timeout' | 'unavailable' | 'error',
+  ): { answer: string; citations: CitationDto[] } {
+    const lower = question.toLowerCase();
+    const keywords = lower.includes('dataset')
+      ? ['dataset', 'data', 'corpus', 'benchmark']
+      : lower.includes('method')
+        ? ['method', 'methodology', 'model', 'architecture', 'training']
+        : lower.includes('limit')
+          ? ['limitation', 'however', 'challenge', 'future work']
+          : lower.includes('future')
+            ? ['future', 'future work', 'extend', 'direction']
+            : ['contribution', 'propose', 'result', 'show', 'approach'];
+    let selected = this.preferKeywordEvidence(evidence, keywords, 3);
+    if (!selected.length) selected = evidence.slice(0, 3);
+    const lines = selected.map((item, index) => `${this.bestSentence(item.chunk, keywords)} [${index + 1}]`);
+    return {
+      answer:
+        `${FALLBACK_REASON[failure ?? 'error']}, so these are the most relevant passages (not a synthesized answer):\n` +
+        lines.join('\n'),
+      citations: this.citationsFromEvidence(selected),
+    };
+  }
+
+  private summaryFallback(evidence: Evidence[]) {
+    const fallback = this.composeCitedAnswer('Summarize this paper', evidence);
+    return { summary: fallback.answer, citations: fallback.citations };
   }
 
   private async resolveChatSession(
@@ -944,8 +1344,10 @@ export class QueryService {
     retrievalMode: string;
     rawRequest: unknown;
     citations: CitationDto[];
+    /** An honest "not enough evidence" reply may have no citations. */
+    allowUncited?: boolean;
   }) {
-    if (!input.citations.length) {
+    if (!input.citations.length && !input.allowUncited) {
       throw new BadRequestException('Citation-backed answers require at least one source citation.');
     }
 

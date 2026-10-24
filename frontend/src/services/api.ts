@@ -81,6 +81,13 @@ async function requestMultipart<T>(
 }
 
 // ── Typed error ────────────────────────────────────────────────────────────
+function streamError(err: unknown, timeout: AbortSignal): Error {
+  if (err instanceof ApiError) return err;
+  if (timeout.aborted) return new ApiError('No answer after 4 minutes. The AI service may be overloaded; please try again.', 504);
+  if ((err as Error)?.name === 'AbortError') return new ApiError('Request cancelled.', 499);
+  return new ApiError('Could not reach DocLens. Check your connection and try again.', 0);
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -116,7 +123,14 @@ export const authApi = {
 
   me: () => request<UserProfile>('GET', '/auth/me'),
 
-  updateProfile: (payload: { name?: string; password?: string }) =>
+  /** Exchange a Google Identity Services ID token for a DocLens session. */
+  google: (credential: string) =>
+    request<AuthResult>('POST', '/auth/google', { credential }),
+
+  /** Public sign-in options; googleClientId is null when Google sign-in is off. */
+  config: () => request<{ googleClientId: string | null }>('GET', '/auth/config'),
+
+  updateProfile: (payload: { name?: string; password?: string; currentPassword?: string }) =>
     request<UserProfile>('PATCH', '/auth/me', payload),
 };
 
@@ -275,6 +289,16 @@ export interface QueryMessage {
     retrievalPath?: string[];
   }[];
   timestamp: string;
+  session_id?: string;
+  model_used?: string;
+  /** True when the papers did not contain enough evidence; the answer may then have no citations. */
+  insufficient_evidence?: boolean;
+  confidence?: number;
+  claims?: { claimText: string; verified: boolean; supportedBy: string[] }[];
+  /** AI pipeline stage durations reported by the AI service. */
+  timings_ms?: Record<string, number>;
+  /** True when a retried request returned the already stored answer. */
+  replayed?: boolean;
 }
 
 export interface QueryPayload {
@@ -284,7 +308,12 @@ export interface QueryPayload {
   sessionId?: string;
   retrievalMode?: 'vector';
   documentIds?: string[];
+  /** Same id on a retry → the backend returns the first answer instead of asking again. */
+  clientRequestId?: string;
 }
+
+/** Longest a chat answer may take before the browser gives up (backend gives up at 180 s). */
+export const ASK_TIMEOUT_MS = 240_000;
 
 export interface ChatSession {
   id: string;
@@ -340,6 +369,36 @@ export interface LiteratureReview {
   status?: string;
 }
 
+export interface ResearchGap {
+  title: string;
+  gapType: string;
+  description: string;
+  rationale: string;
+  suggestedResearchQuestions: string[];
+  suggestedApproach: string;
+  confidence: number;
+  grounded: boolean;
+  relatedDocuments: { documentId: string; title: string }[];
+  citations: CitationRef[];
+}
+
+export interface ResearchGapAnalysis {
+  topic?: string;
+  summary: string;
+  consensus: string[];
+  contradictions: {
+    topic: string;
+    positions: { paperTitle: string; documentId?: string; stance: string }[];
+    possibleExplanation: string;
+  }[];
+  gaps: ResearchGap[];
+  coverage: string;
+  citations: CitationRef[];
+  documentIds: string[];
+  method: 'llm' | 'extractive' | string;
+  insufficientEvidence: boolean;
+}
+
 export interface ReadingProgress {
   id?: string;
   documentId: string;
@@ -366,6 +425,67 @@ export interface ResearchNote {
 export const queryApi = {
   ask: (payload: QueryPayload) =>
     request<QueryMessage>('POST', '/query/ask', payload),
+
+  /**
+   * Same as `ask`, but over Server-Sent Events: `onStage` receives progress
+   * ("retrieving", "generating", ...). Abort `signal` to cancel; the backend
+   * then stops and stores nothing. Times out after ASK_TIMEOUT_MS.
+   */
+  askStream: async (
+    payload: QueryPayload,
+    onStage: (stage: string) => void,
+    signal?: AbortSignal,
+  ): Promise<QueryMessage> => {
+    const token = tokenStorage.get();
+    const timeout = AbortSignal.timeout(ASK_TIMEOUT_MS);
+    const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}/query/ask/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: combined,
+      });
+    } catch (err) {
+      throw streamError(err, timeout);
+    }
+    if (!res.ok || !res.body) {
+      const json = await res.json().catch(() => ({}));
+      throw new ApiError(json.message ?? 'The research query failed.', res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary: number;
+        while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const event = /^event: (.*)$/m.exec(frame)?.[1];
+          const data = /^data: (.*)$/m.exec(frame)?.[1];
+          if (!event || data === undefined) continue; // keep-alive comment
+          const parsed = JSON.parse(data);
+          if (event === 'stage') onStage(parsed.stage);
+          else if (event === 'result') return parsed.data ?? parsed;
+          else if (event === 'error') throw new ApiError(parsed.message ?? 'The research query failed.', parsed.statusCode ?? 500);
+        }
+      }
+    } catch (err) {
+      throw streamError(err, timeout);
+    } finally {
+      reader.cancel().catch(() => undefined);
+    }
+    throw new ApiError('The connection closed before an answer arrived. Please try again.', 502);
+  },
 
   sessions: (collectionId?: string) =>
     request<ChatSession[]>('GET', '/query/sessions', undefined, collectionId ? { collectionId } : undefined),
@@ -395,6 +515,9 @@ export const queryApi = {
 
   literatureReview: (id: string) =>
     request<LiteratureReview>('GET', `/query/literature-reviews/${id}`),
+
+  researchGaps: (payload: { documentIds?: string[]; collectionId?: string; topic?: string; maxGaps?: number }) =>
+    request<ResearchGapAnalysis>('POST', '/query/research-gaps', payload),
 
   notes: (params?: { collectionId?: string; documentId?: string }) =>
     request<ResearchNote[]>('GET', '/query/notes', undefined, params),

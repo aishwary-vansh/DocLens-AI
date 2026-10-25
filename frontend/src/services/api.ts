@@ -127,8 +127,18 @@ export const authApi = {
   google: (credential: string) =>
     request<AuthResult>('POST', '/auth/google', { credential }),
 
-  /** Public sign-in options; googleClientId is null when Google sign-in is off. */
-  config: () => request<{ googleClientId: string | null }>('GET', '/auth/config'),
+  /** Trade the one-time code from the Google redirect (#/login?google_code=…) for a session. */
+  googleExchange: (code: string) =>
+    request<AuthResult>('POST', '/auth/google/exchange', { code }),
+
+  /** Full-page URL that starts the server-side Google redirect flow. */
+  googleStartUrl: () => `${BASE_URL}/auth/google/start`,
+
+  /**
+   * Public sign-in options; googleClientId is null when Google sign-in is off.
+   * googleRedirect is true when the server-side redirect flow is configured.
+   */
+  config: () => request<{ googleClientId: string | null; googleRedirect?: boolean }>('GET', '/auth/config'),
 
   updateProfile: (payload: { name?: string; password?: string; currentPassword?: string }) =>
     request<UserProfile>('PATCH', '/auth/me', payload),

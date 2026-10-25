@@ -8,10 +8,10 @@ import {
   PageHeader,
   Panel,
 } from "../components/research/ResearchComponents";
-import Icon from "../components/research/Icons";
 import { formatDate } from "../utils/researchData";
 import { useToast } from "../contexts/ToastContext";
 import CitedReport from "../components/research/CitedReport";
+import Icon from "../components/research/Icons";
 
 const COMPARISON_SECTIONS = [
   ["methods", "Methods"],
@@ -26,21 +26,21 @@ const COMPARISON_SECTIONS = [
 
 const cell = (value) => String(value || "—").replace(/\|/g, "/").replace(/\n/g, " ");
 
-/** Markdown for the comparison reader: narrative, per-aspect lists and the
- *  paper matrix, all from the stored structured result (not just the narrative). */
+/** Markdown for the comparison reader: narrative, the paper matrix, then the
+ *  per-aspect lists, all from the stored structured result (not just the narrative). */
 function comparisonMarkdown(comparison) {
   const r = comparison.result || comparison;
   const parts = [r.narrative || comparison.markdown || "No narrative generated."];
-  for (const [key, heading] of COMPARISON_SECTIONS) {
-    const items = (r[key] || []).filter(Boolean);
-    if (items.length) parts.push(`## ${heading}`, items.map((item) => `- ${item}`).join("\n"));
-  }
   if (r.paperMatrix?.length) {
     parts.push(
       "## Paper matrix",
       ["| Paper | Method | Datasets | Key result | Limitation |", "| --- | --- | --- | --- | --- |",
         ...r.paperMatrix.map((row) => `| ${cell(row.title)} | ${cell(row.method)} | ${cell(row.datasets)} | ${cell(row.key_result)} | ${cell(row.limitation)} |`)].join("\n"),
     );
+  }
+  for (const [key, heading] of COMPARISON_SECTIONS) {
+    const items = (r[key] || []).filter(Boolean);
+    if (items.length) parts.push(`## ${heading}`, items.map((item) => `- ${item}`).join("\n"));
   }
   return parts.join("\n\n");
 }
@@ -117,8 +117,12 @@ const ComparePapersPage = () => {
     }
   };
 
+  // Download the same report the reader shows: narrative, aspect lists and paper matrix.
   const exportMarkdown = (comp) => {
-    const content = comp.markdown || `# ${comp.title}\n\n${comp.result?.narrative || comp.narrative || ""}`;
+    const content = `# ${comp.title}
+
+${comparisonMarkdown(comp)}
+`;
     const blob = new Blob([content], { type: "text/markdown" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -150,52 +154,34 @@ const ComparePapersPage = () => {
       {error && <ErrorNotice message={error} />}
 
       {activeComparison ? (
-        <div className="report-detail-layout">
-          <Panel
-            title={activeComparison.title}
-            eyebrow={formatDate(activeComparison.createdAt)}
-            action={
-              <ActionButton variant="ghost" onClick={() => setActiveComparison(null)}>
-                Close
-              </ActionButton>
-            }
-          >
-            <div className="report-reader">
-              <CitedReport
-                markdown={comparisonMarkdown(activeComparison)}
-                citations={(activeComparison.result || activeComparison).citations || []}
-                verification={(activeComparison.result || activeComparison).verification}
-              />
+        <Panel
+          className="report-detail"
+          title={activeComparison.title}
+          eyebrow="Comparison"
+          action={
+            <div className="report-toolbar">
+              <button type="button" className="report-tool" onClick={() => exportMarkdown(activeComparison)} title="Download as Markdown (.md)">
+                <Icon name="download" size={15} /> Download
+              </button>
+              <button type="button" className="report-tool" onClick={() => setActiveComparison(null)}>
+                <Icon name="close" size={15} /> Close
+              </button>
             </div>
-          </Panel>
-          <div className="report-detail-side">
-            <Panel title="Comparison Details">
-              <div style={{ padding: "15px", display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--rp-text-soft)", fontSize: "0.8rem" }}>Papers analyzed</span>
-                  <strong style={{ color: "var(--rp-cyan)" }}>{activeComparison.documentIds?.length || 0}</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--rp-text-soft)", fontSize: "0.8rem" }}>Date generated</span>
-                  <strong style={{ color: "var(--rp-text)" }}>{new Date(activeComparison.createdAt).toLocaleDateString()}</strong>
-                </div>
-                {activeComparison.question && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 10 }}>
-                    <span style={{ color: "var(--rp-text-soft)", fontSize: "0.8rem" }}>Research Question</span>
-                    <strong style={{ color: "var(--rp-text)", fontSize: "0.85rem" }}>{activeComparison.question}</strong>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => exportMarkdown(activeComparison)}
-                  style={{ marginTop: 10, padding: "8px", background: "var(--rp-blue)", color: "#000", border: 0, borderRadius: 6, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-                >
-                  <Icon name="download" size={16} /> Export Markdown
-                </button>
-              </div>
-            </Panel>
+          }
+        >
+          <p className="report-meta-line">
+            <span>{activeComparison.documentIds?.length || 0} papers</span>
+            <span>Generated {formatDate(activeComparison.createdAt)}</span>
+            {activeComparison.question && <span>Question: {activeComparison.question}</span>}
+          </p>
+          <div className="report-reader">
+            <CitedReport
+              markdown={comparisonMarkdown(activeComparison)}
+              citations={(activeComparison.result || activeComparison).citations || []}
+              verification={(activeComparison.result || activeComparison).verification}
+            />
           </div>
-        </div>
+        </Panel>
       ) : (
         <Panel>
           {loading ? (
@@ -204,7 +190,7 @@ const ComparePapersPage = () => {
             </div>
           ) : comparisons.length ? (
             <div className="research-table-wrap">
-              <table className="research-table">
+              <table className="research-table research-table-stack">
                 <thead>
                   <tr>
                     <th>Comparison Title</th>
@@ -230,21 +216,9 @@ const ComparePapersPage = () => {
                       <td>{formatDate(c.createdAt)}</td>
                       <td>{c.documentIds?.length || 0} papers</td>
                       <td>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button
-                            type="button"
-                            onClick={() => setActiveComparison(c)}
-                            style={{ padding: "4px 10px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, color: "var(--rp-text)", cursor: "pointer", fontSize: "0.75rem" }}
-                          >
-                            Read
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => exportMarkdown(c)}
-                            style={{ padding: "4px 10px", background: "rgba(110,231,249,0.1)", border: "1px solid rgba(110,231,249,0.2)", borderRadius: 4, color: "var(--rp-cyan)", cursor: "pointer", fontSize: "0.75rem" }}
-                          >
-                            Export
-                          </button>
+                        <div className="row-actions">
+                          <ActionButton variant="secondary" icon="arrowRight" onClick={() => setActiveComparison(c)}>Read</ActionButton>
+                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(c)}>Export</ActionButton>
                         </div>
                       </td>
                     </tr>

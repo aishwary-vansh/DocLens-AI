@@ -147,7 +147,7 @@ sequenceDiagram
 
 Verified in `backend/src/documents/documents.service.ts`, `backend/src/processing/document-processing-queue.service.ts`,
 `ai-service/ingest.py`. Any exception sets `Document.status=FAILED` + `errorMessage` and the job to
-`FAILED` (no retry; `maxAttempts` is 1). The backend progress values written are 20 (EXTRACTING),
+`FAILED` (no retry of a failed job). Jobs interrupted by a backend restart are resumed on startup (`onApplicationBootstrap`, at most 3 attempts). The backend progress values written are 20 (EXTRACTING),
 70 (EMBEDDING), 100 (READY); the `CHUNKING`/`INDEXING` enum values exist but this runner does not set them.
 
 ### 6.2 Question answering

@@ -218,7 +218,7 @@ const ChatPage = () => {
   const abortRef = useRef(null);
   const [copied, setCopied] = useState(false);
   // Open by default on wide screens; on phones the panel is an overlay, so start closed.
-  const [historyOpen, setHistoryOpen] = useState(() => !window.matchMedia?.("(max-width: 900px)").matches);
+  const [historyOpen, setHistoryOpen] = useState(() => !window.matchMedia?.("(max-width: 1200px)").matches);
   const [activeHistoryTab, setActiveHistoryTab] = useState("sessions"); // "sessions" | "queries"
   const [citationPanel, setCitationPanel] = useState(null); // for inline citation view
   const [activeCitation, setActiveCitation] = useState(null);
@@ -599,10 +599,8 @@ const ChatPage = () => {
 
           {/* Suggested questions when session is fresh */}
           {messages.length === 1 && collections.length > 0 && (
-            <div style={{ maxWidth: 560, margin: "0 auto 24px", width: "100%" }}>
-              <p style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--rp-text-muted)", marginBottom: 12 }}>
-                Suggested questions
-              </p>
+            <div className="chat-suggestions">
+              <p className="chat-suggestions-label">Suggested questions</p>
               <div className="chat-suggestion-grid">
                 {[
                   "What is the main contribution?",
@@ -612,21 +610,7 @@ const ChatPage = () => {
                   "What future work is suggested?",
                   "How does this compare to prior work?",
                 ].map(q => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => sendMessage(q)}
-                    style={{
-                      textAlign: "left", padding: "10px 14px",
-                      background: "var(--ds-hover-faint)",
-                      border: "1px solid var(--rp-border)",
-                      borderRadius: 8, color: "var(--rp-text-soft)",
-                      fontSize: "0.78rem", cursor: "pointer",
-                      transition: "all 0.18s", lineHeight: 1.4,
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "var(--ds-accent-soft)"; e.currentTarget.style.borderColor = "var(--ds-accent-line)"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "var(--ds-hover-faint)"; e.currentTarget.style.borderColor = "var(--rp-border)"; }}
-                  >
+                  <button key={q} type="button" className="chat-suggestion" onClick={() => sendMessage(q)}>
                     {q}
                   </button>
                 ))}
@@ -692,15 +676,13 @@ const ChatPage = () => {
         }}>
           <div style={{ maxWidth: 860, width: "100%", margin: "0 auto" }}>
           {/* Collection + Paper picker row */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: "0.6rem", fontWeight: 600, color: "var(--rp-text-muted)", flexShrink: 0 }}>
-              Scope:
-            </span>
+          <div className="chat-scope">
+            <span className="chat-scope-label">Scope</span>
             <select
               className="field-control"
               value={selectedCollectionId}
               onChange={e => { setSelectedCollectionId(e.target.value); setSelectedPaperId(""); }}
-              style={{ padding: "5px 10px", fontSize: "0.75rem", height: "auto", flex: "0 1 200px", minWidth: 120 }}
+              aria-label="Collection"
             >
               {!collections.length && <option value="">No collections</option>}
               {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -710,7 +692,7 @@ const ChatPage = () => {
               className="field-control"
               value={selectedPaperId}
               onChange={e => setSelectedPaperId(e.target.value)}
-              style={{ padding: "5px 10px", fontSize: "0.75rem", height: "auto", flex: "0 1 260px", minWidth: 120 }}
+              aria-label="Paper"
             >
               <option value="">All papers in collection</option>
               {collectionPapers.map(p => (
@@ -721,7 +703,7 @@ const ChatPage = () => {
             </select>
 
             {/* Status badges */}
-            <span style={{ fontSize: "0.65rem", color: "var(--rp-text-muted)", flexShrink: 0 }}>
+            <span className="chat-scope-count">
               {readyPapers.length} / {collectionPapers.length} indexed
             </span>
           </div>

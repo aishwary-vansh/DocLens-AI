@@ -9,11 +9,11 @@ import {
   PageHeader,
   Panel,
 } from "../components/research/ResearchComponents";
-import Icon from "../components/research/Icons";
 import { formatDate } from "../utils/researchData";
 import { useToast } from "../contexts/ToastContext";
 import ResearchGapReport from "../components/research/ResearchGapReport";
 import CitedReport from "../components/research/CitedReport";
+import Icon from "../components/research/Icons";
 
 /** Fallback when a review has no stored Markdown: rebuild it from its sections. */
 function reviewMarkdownFromSections(review) {
@@ -161,38 +161,33 @@ const LiteratureReviewsPage = () => {
       {activeGaps ? (
         <ResearchGapReport analysis={activeGaps} onClose={() => setActiveGaps(null)} />
       ) : activeReview ? (
-        <div className="report-detail-layout">
-          <Panel title={activeReview.title} eyebrow={formatDate(activeReview.createdAt || activeReview.date)} action={<ActionButton variant="ghost" onClick={() => setActiveReview(null)}>Close</ActionButton>}>
-            <div className="report-reader">
-              <CitedReport
-                markdown={activeReview.markdown || reviewMarkdownFromSections(activeReview) || activeReview.content || ""}
-                citations={activeReview.citations || []}
-                verification={activeReview.verification}
-              />
+        <Panel
+          className="report-detail"
+          title={activeReview.title}
+          eyebrow="Literature review"
+          action={
+            <div className="report-toolbar">
+              <button type="button" className="report-tool" onClick={() => exportMarkdown(activeReview)} title="Download as Markdown (.md)">
+                <Icon name="download" size={15} /> Download
+              </button>
+              <button type="button" className="report-tool" onClick={() => setActiveReview(null)}>
+                <Icon name="close" size={15} /> Close
+              </button>
             </div>
-          </Panel>
-          <div className="report-detail-side">
-            <Panel title="Review Details">
-              <div style={{ padding: "15px", display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--rp-text-soft)", fontSize: "0.8rem" }}>Papers analyzed</span>
-                  <strong style={{ color: "var(--rp-cyan)" }}>{activeReview.documentIds?.length || activeReview.paperCount || 0}</strong>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: "var(--rp-text-soft)", fontSize: "0.8rem" }}>Date generated</span>
-                  <strong style={{ color: "var(--rp-text)" }}>{new Date(activeReview.createdAt || activeReview.date).toLocaleDateString()}</strong>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => exportMarkdown(activeReview)}
-                  style={{ marginTop: 10, padding: "8px", background: "var(--rp-blue)", color: "#000", border: 0, borderRadius: 6, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-                >
-                  <Icon name="download" size={16} /> Export Markdown
-                </button>
-              </div>
-            </Panel>
+          }
+        >
+          <p className="report-meta-line">
+            <span>{activeReview.documentIds?.length || activeReview.paperCount || 0} papers</span>
+            <span>Generated {formatDate(activeReview.createdAt || activeReview.date)}</span>
+          </p>
+          <div className="report-reader">
+            <CitedReport
+              markdown={activeReview.markdown || reviewMarkdownFromSections(activeReview) || activeReview.content || ""}
+              citations={activeReview.citations || []}
+              verification={activeReview.verification}
+            />
           </div>
-        </div>
+        </Panel>
       ) : (
         <Panel>
           {loading ? (
@@ -201,7 +196,7 @@ const LiteratureReviewsPage = () => {
             </div>
           ) : reviews.length ? (
             <div className="research-table-wrap">
-              <table className="research-table">
+              <table className="research-table research-table-stack">
                 <thead>
                   <tr>
                     <th>Review Title</th>
@@ -219,21 +214,9 @@ const LiteratureReviewsPage = () => {
                       <td>{formatDate(r.createdAt || r.date)}</td>
                       <td>{r.documentIds?.length || r.paperCount || 0} papers</td>
                       <td>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button
-                            type="button"
-                            onClick={() => setActiveReview(r)}
-                            style={{ padding: "4px 10px", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, color: "var(--rp-text)", cursor: "pointer", fontSize: "0.75rem" }}
-                          >
-                            Read
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => exportMarkdown(r)}
-                            style={{ padding: "4px 10px", background: "rgba(110,231,249,0.1)", border: "1px solid rgba(110,231,249,0.2)", borderRadius: 4, color: "var(--rp-cyan)", cursor: "pointer", fontSize: "0.75rem" }}
-                          >
-                            Export
-                          </button>
+                        <div className="row-actions">
+                          <ActionButton variant="secondary" icon="arrowRight" onClick={() => setActiveReview(r)}>Read</ActionButton>
+                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(r)}>Export</ActionButton>
                         </div>
                       </td>
                     </tr>

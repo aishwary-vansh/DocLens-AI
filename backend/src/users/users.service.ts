@@ -5,7 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type UserRole = 'admin' | 'viewer';
 
-export type SafeUser = Omit<User, 'passwordHash'>;
+export type SafeUser = Omit<User, 'passwordHash' | 'googleId'>;
 
 @Injectable()
 export class UsersService {
@@ -35,7 +35,11 @@ export class UsersService {
     return user;
   }
 
-  async create(email: string, password: string, name: string): Promise<User> {
+  async findByGoogleId(googleId: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { googleId } });
+  }
+
+  async create(email: string, password: string, name: string, googleId?: string): Promise<User> {
     const existing = await this.findByEmail(email);
     if (existing) throw new ConflictException('Email already registered');
 
@@ -46,16 +50,18 @@ export class UsersService {
         name,
         passwordHash,
         role: 'viewer',
+        ...(googleId ? { googleId } : {}),
       },
     });
   }
 
-  async update(id: string, data: { name?: string; passwordHash?: string }): Promise<User> {
+  async update(id: string, data: { name?: string; passwordHash?: string; googleId?: string }): Promise<User> {
     return this.prisma.user.update({ where: { id }, data });
   }
 
   toProfile(user: User): SafeUser {
-    const { passwordHash, ...profile } = user;
+    // googleId is an internal link, not profile data.
+    const { passwordHash, googleId, ...profile } = user;
     return profile;
   }
 }

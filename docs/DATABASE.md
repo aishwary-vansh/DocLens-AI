@@ -51,7 +51,7 @@ erDiagram
 ### Core hierarchy
 | Model | Key fields | Notes |
 | --- | --- | --- |
-| `User` | `email` (unique), `name`, `passwordHash`, `role` (string: `admin`/`viewer`, default `viewer`) | Cascade-deletes workspaces, sessions, comparisons, reviews, notes, progress |
+| `User` | `email` (unique), `name`, `passwordHash`, `role` (string: `admin`/`viewer`, default `viewer`), `googleId` (nullable, unique: the Google `sub` the account is linked to; migration `20261025000000_user_google_id`; stripped from API profiles) | Cascade-deletes workspaces, sessions, comparisons, reviews, notes, progress |
 | `Workspace` | `name`, `description?`, `userId` | Ownership root for authorization |
 | `Collection` | `name`, `description?`, `workspaceId` | Cascade from workspace |
 | `Document` | `title`, `filename`, `fileUrl` (relative, `uploads/<userId>/<file>`), `mimeType`, `fileSize?`, `pageCount?`, `status`, `processingProgress`, `errorMessage?`, `metadata` (JSON), `aiProcessedAt?`, `collectionId` | See §4 for `metadata` contents |

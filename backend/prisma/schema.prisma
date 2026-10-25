@@ -16,6 +16,8 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
+  // Google account "sub" claim once the user signs in with Google (linked by verified email).
+  googleId     String?  @unique
   role         String   @default("viewer") // "admin" | "viewer"
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

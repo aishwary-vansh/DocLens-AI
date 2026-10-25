@@ -46,11 +46,12 @@ const Dashboard = () => {
   // Server-side counts (queries, reviews); the local corpus covers the rest.
   const [serverStats, setServerStats] = useState(null);
 
+  // Refetch whenever the corpus reloads (upload, delete, status change) so the counts never lag.
   useEffect(() => {
     let cancelled = false;
     queryApi.analytics().then((value) => { if (!cancelled) setServerStats(value); }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, []);
+  }, [papers, collections]);
 
   const stats = useMemo(
     () => buildResearchStats({ workspaces, collections, papers, serverStats }),

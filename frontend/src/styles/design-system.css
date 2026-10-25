@@ -395,3 +395,161 @@
 .card-link { color: var(--ds-accent); font-weight: 600; font-size: 0.84rem; }
 .card-link:hover:not(:disabled) { color: var(--ds-accent-strong); }
 .concept-row span { border-radius: 999px; background: var(--ds-hover); border-color: transparent; }
+
+/* ── Layout fixes (2026-10-25 audit at 1440 / 1024 / 390 px) ─────────────
+   Grids size to their children, so a row of three stat cards fills the
+   width instead of leaving an empty fourth column. */
+.stat-grid,
+.analytics-grid { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.paper-card-grid,
+.collection-card-grid { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.dashboard-section-grid { gap: 16px; margin-bottom: 16px; }
+.full-width-section { margin-bottom: 16px; }
+.research-command-panel { margin-bottom: 16px; }
+.research-page-header { margin-bottom: 20px; }
+.research-page-header p { max-width: 62ch; }
+
+/* Paper and collection cards: footer row sits at the bottom of every card. */
+.paper-card, .collection-card { grid-template-rows: auto auto 1fr auto; min-height: 0; }
+
+/* Tables: action buttons share one style. */
+.research-table td .rp-button { min-height: 30px; padding: 4px 10px; font-size: 0.78rem; }
+
+/* Chat: suggestions align with the message column. */
+.chat-suggestions { width: 100%; margin: 0 0 20px; }
+.chat-suggestions-label { margin-bottom: 10px; color: var(--rp-text-muted); font-size: 0.74rem; font-weight: 600; }
+.chat-suggestion-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-suggestion {
+  padding: 8px 12px;
+  border: 1px solid var(--rp-border);
+  border-radius: 999px;
+  background: var(--rp-surface);
+  color: var(--rp-text-soft);
+  font: inherit;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.chat-suggestion:hover { background: var(--ds-accent-soft); border-color: var(--ds-accent-line); color: var(--rp-text); }
+.chat-scope { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.chat-scope-label { flex-shrink: 0; color: var(--rp-text-muted); font-size: 0.72rem; font-weight: 600; }
+.chat-scope select { flex: 0 1 240px; min-width: 140px; height: 32px; padding: 4px 10px; font-size: 0.78rem; }
+.chat-scope-count { color: var(--rp-text-muted); font-size: 0.72rem; }
+
+/* History/source panel overlays the chat below 1200 px instead of
+   squeezing the conversation to a narrow column. */
+@media (max-width: 1200px) {
+  .chat-inspector-panel.is-open {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    z-index: 30;
+    width: min(92%, 340px) !important;
+    min-width: 0 !important;
+    box-shadow: var(--ds-shadow-pop);
+  }
+}
+
+@media (max-width: 780px) {
+  .stat-grid,
+  .analytics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .research-stat-card p { display: none; }
+  .research-stat-card { padding: 14px; }
+  .research-main { padding: 18px 16px 28px; }
+  .chat-scope select { flex: 1 1 100%; min-width: 0; }
+  .chat-scope-label { display: none; }
+}
+@media (max-width: 420px) {
+  .paper-card-grid, .collection-card-grid { grid-template-columns: 1fr; }
+}
+
+/* Report lists become stacked rows on phones instead of a sideways-scrolling table. */
+@media (max-width: 640px) {
+  .research-table-stack thead { display: none; }
+  .research-table-stack, .research-table-stack tbody { display: block; width: 100%; }
+  .research-table-stack tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--rp-border);
+  }
+  .research-table-stack tr:last-child { border-bottom: 0; }
+  .research-table-stack td { display: block; padding: 0; border: 0; color: var(--rp-text-muted); font-size: 0.8rem; }
+  .research-table-stack td:first-child { flex: 1 1 100%; color: var(--rp-text); font-size: 0.9rem; }
+  .research-table-stack td:last-child { flex: 1 1 100%; margin-top: 6px; }
+  .research-table-wrap:has(.research-table-stack) { overflow: visible; }
+}
+
+/* ── Report detail (comparisons, literature reviews) ─────────────────
+   One full-width panel: tools in the header, metadata on one line, and
+   tables (e.g. the paper matrix) spanning the whole panel. */
+.report-detail { width: 100%; }
+/* Research gaps keep a side column for consensus and contradictions. */
+.report-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+.report-detail-side { position: sticky; top: 76px; display: grid; gap: 16px; }
+.report-toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
+.report-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--rp-border);
+  border-radius: var(--ds-radius-sm);
+  background: transparent;
+  color: var(--rp-text-soft);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.report-tool:hover { background: var(--ds-hover); border-color: var(--rp-border-strong); color: var(--rp-text); }
+.report-tool:focus-visible { outline: none; box-shadow: var(--rp-focus); }
+.report-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--rp-border);
+  color: var(--rp-text-muted);
+  font-size: 0.8rem;
+}
+.report-detail .report-reader { padding: 20px 24px 28px; }
+.report-reader .md-answer { max-width: none; }
+.report-reader .md-answer > p,
+.report-reader .md-answer > ul,
+.report-reader .md-answer > ol { max-width: 80ch; }
+.report-reader .md-table-wrap { width: 100%; margin: 14px 0; }
+.report-reader .md-table-wrap { overflow-x: auto; }
+.report-reader .md-table-wrap table { width: 100%; min-width: 640px; }
+.report-reader .md-table-wrap td { min-width: 120px; line-height: 1.5; }
+.report-reader .md-table-wrap th { position: sticky; top: 0; }
+
+.report-meta { margin: 0; padding: 4px 16px 0; display: grid; }
+.report-meta > div { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--rp-border); font-size: 0.84rem; }
+.report-meta dt { color: var(--rp-text-muted); }
+.report-meta dd { margin: 0; color: var(--rp-text); font-weight: 600; text-align: right; }
+.report-meta > .report-meta-block { display: grid; gap: 4px; border-bottom: 0; }
+.report-meta-block dd { text-align: left; font-weight: 500; line-height: 1.5; }
+.report-meta-actions { padding: 14px 16px 16px; }
+.report-meta-actions .rp-button { width: 100%; justify-content: center; }
+
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+@media (max-width: 1100px) {
+  .report-detail-layout { grid-template-columns: minmax(0, 1fr); }
+  .report-detail-side { position: static; }
+}
+@media (max-width: 640px) {
+  .report-detail .panel-header { flex-direction: column; align-items: stretch; }
+  .report-detail .report-reader { padding: 16px; }
+}

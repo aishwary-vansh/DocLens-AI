@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 
 import { EventsGateway } from '../gateway/events.gateway';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,8 +13,11 @@ interface ProcessDocumentJob {
   collectionId: string;
 }
 
+/** A job interrupted more often than this is failed instead of resumed again. */
+const MAX_RESUME_ATTEMPTS = 3;
+
 @Injectable()
-export class DocumentProcessingQueueService {
+export class DocumentProcessingQueueService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DocumentProcessingQueueService.name);
 
   constructor(
@@ -52,6 +55,53 @@ export class DocumentProcessingQueueService {
     });
 
     return processingJob;
+  }
+
+  /**
+   * Jobs run in this process, so a backend restart (redeploy, crash, `docker
+   * compose up`) leaves them QUEUED/ACTIVE with the document stuck mid-pipeline.
+   * On startup, resume each one: AI ingest reuses unchanged chunk ids and embed
+   * only fills missing vectors, so re-running them is safe.
+   */
+  async onApplicationBootstrap() {
+    const orphaned = await this.prisma.processingJob.findMany({
+      where: { status: { in: ['QUEUED', 'ACTIVE'] } },
+      orderBy: { createdAt: 'asc' },
+      include: { document: { select: { status: true } } },
+    }).catch((err) => {
+      this.logger.warn(`Could not look for interrupted processing jobs: ${err.message}`);
+      return [];
+    });
+    for (const job of orphaned) {
+      // A document that already finished (or was failed by hand) only needs its job closed.
+      if (['READY', 'COMPLETED', 'FAILED'].includes(job.document?.status ?? '')) {
+        await this.prisma.processingJob.update({
+          where: { id: job.id },
+          data: { status: job.document?.status === 'FAILED' ? 'FAILED' : 'COMPLETED' },
+        }).catch(() => {});
+        continue;
+      }
+      const payload = (job.payload ?? {}) as Partial<ProcessDocumentJob>;
+      if (!payload.absoluteFilePath || !payload.collectionId || job.attempts >= MAX_RESUME_ATTEMPTS) {
+        const reason = 'Processing was interrupted by a server restart. Please upload the paper again.';
+        await this.prisma.processingJob.update({
+          where: { id: job.id },
+          data: { status: 'FAILED', errorMessage: reason, failedAt: new Date() },
+        }).catch(() => {});
+        await this.prisma.document.update({
+          where: { id: job.documentId },
+          data: { status: 'FAILED', processingProgress: 0, errorMessage: reason },
+        }).catch(() => null);
+        continue;
+      }
+      this.logger.log(`Resuming interrupted processing for ${job.documentId} (attempt ${job.attempts + 1})`);
+      void this.runJobDirect({
+        processingJobId: job.id,
+        documentId: job.documentId,
+        absoluteFilePath: payload.absoluteFilePath,
+        collectionId: payload.collectionId,
+      });
+    }
   }
 
   private async runJobDirect(job: ProcessDocumentJob) {

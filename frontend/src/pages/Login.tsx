@@ -12,11 +12,39 @@ import { useAuth } from '../contexts/AuthContext';
 import useGoogleSignIn from '../hooks/useGoogleSignIn';
 import BgCanvas from './landing/BgCanvas';
 import logoUrl from '@/assets/logo.png';
+import { authApi } from '../services/api';
 import '../styles/auth.css';
 
 type Mode = 'login' | 'register';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Messages for #/login?google_error=… set by GET /auth/google/callback. */
+const GOOGLE_ERRORS: Record<string, string> = {
+  cancelled: 'Google sign-in was cancelled. You can try again or use email.',
+  state: 'That Google sign-in link expired or was opened in another tab. Please try again.',
+  exchange: 'Google did not complete the sign-in. Please try again.',
+  invalid: 'Google returned a sign-in we could not verify. Please try again.',
+  unverified: 'Your Google email address is not verified.',
+  conflict: 'This email is already linked to a different Google account.',
+  unconfigured: 'Google sign-in is not enabled on this server yet. Use email instead.',
+  unavailable: 'Could not reach Google. Check your connection and try again.',
+};
+
+/** Read and strip google_code / google_error from the hash so a reload cannot reuse them. */
+function takeGoogleRedirectParams(): { code: string | null; error: string | null } {
+  const [path, query = ''] = window.location.hash.split('?');
+  const params = new URLSearchParams(query);
+  const code = params.get('google_code');
+  const error = params.get('google_error');
+  if (code || error) {
+    params.delete('google_code');
+    params.delete('google_error');
+    const rest = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${path}${rest ? `?${rest}` : ''}`);
+  }
+  return { code, error };
+}
 
 const FEATURES = [
   { icon: FileSearch, title: 'Answers with receipts', text: 'Every sentence links to the exact passage and page it came from.' },
@@ -49,7 +77,7 @@ type LoginProps = {
 };
 
 const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) => {
-  const { login, register, loginWithGoogle, error, clearError } = useAuth();
+  const { login, register, loginWithGoogle, completeGoogleRedirect, error, clearError } = useAuth();
   const [mode, setMode] = useState<Mode>(routeMode);
   useEffect(() => { setMode(routeMode); }, [routeMode]);
   const [email, setEmail] = useState('');
@@ -58,6 +86,7 @@ const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) 
   const [showPass, setShowPass] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const [busy, setBusy] = useState<'email' | 'google' | null>(null);
+  const [googleNotice, setGoogleNotice] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [sample, setSample] = useState(0);
   const card = useAnimationControls();
@@ -74,6 +103,24 @@ const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) 
     try { await loginWithGoogle(credential); } catch { shake(); } finally { setBusy(null); }
   }, [loginWithGoogle, shake]);
   const google = useGoogleSignIn(onGoogle, { text: mode === 'login' ? 'signin_with' : 'signup_with' });
+
+  // Back from Google's redirect flow: redeem the one-time code or explain the error.
+  useEffect(() => {
+    const { code, error: reason } = takeGoogleRedirectParams();
+    if (reason) {
+      setGoogleNotice(GOOGLE_ERRORS[reason] ?? GOOGLE_ERRORS.invalid);
+    } else if (code) {
+      setBusy('google');
+      completeGoogleRedirect(code).catch(() => shake()).finally(() => setBusy(null));
+    }
+  }, [completeGoogleRedirect, shake]);
+
+  const startGoogleRedirect = () => {
+    setGoogleNotice('');
+    clearError();
+    setBusy('google');
+    window.location.assign(authApi.googleStartUrl());
+  };
 
   useEffect(() => {
     const id = window.setInterval(() => setSample((i) => (i + 1) % SAMPLE_QUESTIONS.length), 4200);
@@ -215,7 +262,18 @@ const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) 
           {/* Google */}
           <div className="auth-google">
             <div ref={google.buttonRef} className={`auth-google-slot ${google.status === 'ready' ? 'is-ready' : ''}`} />
-            {google.status !== 'ready' && (
+            {google.status === 'redirect' && (
+              <button
+                type="button"
+                className="auth-google-fallback auth-google-redirect"
+                disabled={busy !== null}
+                onClick={startGoogleRedirect}
+              >
+                {busy === 'google' ? <Loader2 size={17} className="auth-spin" /> : <GoogleMark />}
+                {mode === 'login' ? 'Continue with Google' : 'Sign up with Google'}
+              </button>
+            )}
+            {google.status !== 'ready' && google.status !== 'redirect' && (
               <button
                 type="button"
                 className="auth-google-fallback"
@@ -227,9 +285,12 @@ const Login = ({ mode: routeMode = 'login', onModeChange, onBack }: LoginProps) 
                 Continue with Google
               </button>
             )}
-            {busy === 'google' && <div className="auth-google-busy"><Loader2 size={16} className="auth-spin" /> Signing you in…</div>}
+            {googleNotice && (
+              <p className="auth-hint auth-hint-warn" role="alert">{googleNotice}</p>
+            )}
+            {busy === 'google' && google.status !== 'redirect' && <div className="auth-google-busy"><Loader2 size={16} className="auth-spin" /> Signing you in…</div>}
             <AnimatePresence>
-              {touched.google && google.status !== 'ready' && google.status !== 'loading' && (
+              {touched.google && !['ready', 'loading', 'redirect'].includes(google.status) && (
                 <motion.p className="auth-hint" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
                   {google.status === 'unconfigured'
                     ? 'Google sign-in is not enabled on this server yet. Use email below, or ask the admin to set GOOGLE_CLIENT_ID.'

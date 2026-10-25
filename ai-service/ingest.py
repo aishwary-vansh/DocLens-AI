@@ -21,6 +21,13 @@ MIN_CHUNK_CHARS = int(os.getenv("MIN_CHUNK_CHARS", "120"))
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 EMBED_BATCH_SIZE = int(os.getenv("EMBED_BATCH_SIZE", "16"))
+# Attention memory grows with batch x length^2. Chunks are padded to the longest
+# one in a batch, so a single long chunk (a big table can reach ~2.8k tokens)
+# made a 16-chunk batch need ~8 GB and the container was OOM-killed. Batches are
+# sized so batch x longest^2 stays within what EMBED_BATCH_SIZE chunks of
+# EMBED_REFERENCE_TOKENS tokens would cost. Inputs are not truncated, so the
+# vectors are the same as before.
+EMBED_REFERENCE_TOKENS = int(os.getenv("EMBED_REFERENCE_TOKENS", "512"))
 # The reranker's config allows 8192 tokens; chunk pairs are ~350 tokens on
 # average (max ~670), and 512 was 1.5x faster than the default on CPU.
 RERANKER_MAX_LENGTH = int(os.getenv("RERANKER_MAX_LENGTH", "512"))
@@ -391,6 +398,36 @@ def ingest_document(document_id: str, file_path: str, collection_id: str):
     }
 
 
+def _token_lengths(model, texts: list[str]) -> list[int]:
+    """Token count per text as the model will see it (capped at its max length)."""
+    limit = getattr(model, "max_seq_length", None) or 8192
+    try:
+        ids = model.tokenizer(texts, add_special_tokens=True, truncation=True, max_length=limit)["input_ids"]
+        return [len(x) for x in ids]
+    except Exception:  # tokenizer unavailable (e.g. a test double): estimate ~4 chars per token
+        return [min(limit, max(1, len(t) // 4)) for t in texts]
+
+
+def length_bounded_batches(lengths: list[int], max_batch: int = EMBED_BATCH_SIZE,
+                           reference_tokens: int = EMBED_REFERENCE_TOKENS) -> list[list[int]]:
+    """Group indices (longest first) so batch_size x longest_length^2 stays within
+    max_batch x reference_tokens^2. A chunk longer than the reference gets a
+    smaller batch, down to a batch of one."""
+    budget = max_batch * reference_tokens ** 2
+    order = sorted(range(len(lengths)), key=lambda i: lengths[i], reverse=True)
+    batches: list[list[int]] = []
+    current: list[int] = []
+    for i in order:
+        longest = lengths[current[0]] if current else lengths[i]
+        if current and (len(current) + 1 > max_batch or (len(current) + 1) * longest ** 2 > budget):
+            batches.append(current)
+            current = []
+        current.append(i)
+    if current:
+        batches.append(current)
+    return batches
+
+
 def embed_document(document_id: str) -> dict:
     """Generate BGE-M3 embeddings for Phase 1 chunks and persist them."""
     chunks = pg_store.get_unembedded_chunks(document_id)
@@ -404,12 +441,17 @@ def embed_document(document_id: str) -> dict:
         }
 
     model = get_model()
-    embeddings = model.encode(
-        [chunk["content"] for chunk in chunks],
-        batch_size=EMBED_BATCH_SIZE,
-        normalize_embeddings=True,
-        show_progress_bar=False,
-    )
+    texts = [chunk["content"] for chunk in chunks]
+    embeddings = [None] * len(texts)
+    for batch in length_bounded_batches(_token_lengths(model, texts)):
+        vectors = model.encode(
+            [texts[i] for i in batch],
+            batch_size=len(batch),
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        for i, vector in zip(batch, vectors):
+            embeddings[i] = vector
     for index, chunk in enumerate(chunks):
         vector = embeddings[index]
         chunk["embedding"] = vector.tolist() if hasattr(vector, "tolist") else list(vector)

@@ -9,3 +9,11 @@ export class GoogleLoginDto {
   @MaxLength(4096)
   credential: string;
 }
+
+export class GoogleExchangeDto {
+  @ApiProperty({ description: 'One-time code from the #/login?google_code=… redirect' })
+  @IsString()
+  @MinLength(20)
+  @MaxLength(128)
+  code: string;
+}

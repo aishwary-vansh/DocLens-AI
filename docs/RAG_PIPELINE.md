@@ -84,7 +84,7 @@ Vision/OCR: `VISION_ENABLED` / `VISION_MAX_PAGES` appear in `.env.example` and c
 ## 3. Embedding (`POST /embed`)
 
 `ingest.embed_document`: loads chunks with `embedding IS NULL`, encodes with `SentenceTransformer("BAAI/bge-m3")` (`EMBEDDING_MODEL`),
-batch size `EMBED_BATCH_SIZE` (16), `normalize_embeddings=True`. The loader raises if the model's dimension is not **1024**.
+`normalize_embeddings=True`. Batches are length-bounded (`length_bounded_batches`): chunks are sorted longest first, and a batch is cut when batch × longest² would exceed `EMBED_BATCH_SIZE` (16) × `EMBED_REFERENCE_TOKENS` (512)², so a long chunk is embedded in a small batch (down to one). Before this, one ~2.8k-token chunk padded a 16-chunk batch and the AI service was OOM-killed (measured 2026-10-26: >6.4 GiB then exit 137 on a 7.4 GiB Docker VM; after: 1.46–1.95 GiB peak for the same paper). Inputs are not truncated. The loader raises if the model's dimension is not **1024**.
 Vectors are written with `UPDATE "DocumentChunk" SET embedding`, and `EmbeddingMetadata` is upserted (cosine, `pgvector`).
 Because only un-embedded rows are processed, re-calling `/embed` is idempotent; re-calling `/ingest` replaces all chunks (and therefore drops vectors).
 

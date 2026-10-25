@@ -1,7 +1,7 @@
 // src/auth/google-auth.spec.ts
 // Google sign-in (ID-token verification against a local test key) and
 // PATCH /auth/me profile updates, with an in-memory users service.
-import { BadRequestException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -35,14 +35,15 @@ function idToken(overrides: Record<string, unknown> = {}, kid = 'k1') {
 class FakeUsers {
   users: Record<string, any> = {};
   async findByEmail(email: string) { return Object.values(this.users).find((u) => u.email === email) ?? null; }
+  async findByGoogleId(googleId: string) { return Object.values(this.users).find((u) => u.googleId === googleId) ?? null; }
   async findByIdOrThrow(id: string) { return this.users[id]; }
-  async create(email: string, password: string, name: string) {
-    const user = { id: `u${Object.keys(this.users).length + 1}`, email, name, role: 'viewer', passwordHash: await bcrypt.hash(password, 4) };
+  async create(email: string, password: string, name: string, googleId?: string) {
+    const user = { id: `u${Object.keys(this.users).length + 1}`, email, name, role: 'viewer', passwordHash: await bcrypt.hash(password, 4), googleId: googleId ?? null };
     this.users[user.id] = user;
     return user;
   }
   async update(id: string, data: any) { Object.assign(this.users[id], data); return this.users[id]; }
-  toProfile(user: any) { const { passwordHash, ...rest } = user; return rest; }
+  toProfile(user: any) { const { passwordHash, googleId, ...rest } = user; return rest; }
 }
 
 function setup(clientId = CLIENT_ID) {
@@ -70,6 +71,35 @@ describe('Google sign-in', () => {
     const result = await auth.googleLogin(idToken());
     expect(result.user.id).toBe('u1');
     expect(Object.keys(users.users)).toHaveLength(1);
+  });
+
+  it('links the Google account on first sign-in and keeps the password login', async () => {
+    const { auth, users } = setup();
+    await users.create('ada@lab.edu', 'password1', 'Existing Ada');
+    await auth.googleLogin(idToken());
+    expect(users.users.u1.googleId).toBe('g-123');
+    expect((await auth.googleLogin(idToken())).user).not.toHaveProperty('googleId');
+    expect(await auth.validateUser('ada@lab.edu', 'password1')).toMatchObject({ id: 'u1' });
+  });
+
+  it('finds a linked account by Google id even after the Google email changes', async () => {
+    const { auth, users } = setup();
+    await auth.googleLogin(idToken());
+    const result = await auth.googleLogin(idToken({ email: 'ada@new-lab.edu' }));
+    expect(result.user.id).toBe('u1');
+    expect(Object.keys(users.users)).toHaveLength(1);
+  });
+
+  it('refuses an email already linked to a different Google account', async () => {
+    const { auth } = setup();
+    await auth.googleLogin(idToken({ sub: 'g-first' }));
+    await expect(auth.googleLogin(idToken({ sub: 'g-second' }))).rejects.toThrow(ConflictException);
+  });
+
+  it('gives Google-created accounts no usable password', async () => {
+    const { auth } = setup();
+    await auth.googleLogin(idToken());
+    expect(await auth.validateUser('ada@lab.edu', '')).toBeNull();
   });
 
   it('caches Google keys between sign-ins', async () => {

@@ -12,7 +12,7 @@
 | Seeded admin + demo users | Implemented | `backend/src/main.ts`, `backend/src/users/users.service.ts` |
 | Role-based access (`admin`/`viewer`) | **Not enforced** — guard + decorator exist, unused | `backend/src/common/guards/roles.guard.ts`, `decorators/roles.decorator.ts` |
 | Update profile (name, password with current password) | Implemented | `PATCH /auth/me` (`auth.service.ts › updateProfile`); UI `frontend/src/pages/SettingsPage.jsx` |
-| Google sign-in (Google Identity Services, server-side ID-token check) | Implemented; off until `GOOGLE_CLIENT_ID` is set | `backend/src/auth/google-token.verifier.ts`, `auth.service.ts › googleLogin`; `frontend/src/hooks/useGoogleSignIn.js`, `pages/Login.tsx` |
+| Google sign-in: popup (Google Identity Services ID token) or server-side redirect (authorization code + PKCE); accounts linked by Google `sub`, then by verified email | Implemented and unit-tested; **not tested with real Google credentials**. Off until `GOOGLE_CLIENT_ID` is set; redirect flow when `GOOGLE_CLIENT_SECRET` and `GOOGLE_CALLBACK_URL` are also set | `backend/src/auth/google-token.verifier.ts`, `google-oauth.service.ts`, `auth.service.ts › signInGoogleIdentity`, `auth.controller.ts`; `frontend/src/hooks/useGoogleSignIn.js`, `pages/Login.tsx`, `contexts/AuthContext.tsx › completeGoogleRedirect` |
 | Login/landing UI, auth state | Implemented — split-screen sign-in (story panel + card), inline validation, show password, strength meter, caps-lock hint, animated mode switch | `frontend/src/pages/Login.tsx`, `styles/auth.css`, `Landing.jsx`, `contexts/AuthContext.tsx`, `App.jsx` |
 | Responsive app shell: off-canvas sidebar under 900 px, persisted collapse, account menu, Ctrl/⌘ K search, page transitions | Implemented | `frontend/src/components/layout/*`, `contexts/AppContext.jsx`, `styles/polish.css` |
 | Dashboard: greeting, quick actions, clickable stat cards, server-side counts | Implemented | `frontend/src/pages/Dashboard.jsx` (`queryApi.analytics`) |
@@ -36,7 +36,7 @@
 | PDF upload (≤ 50 MB, PDF mimetype + extension) | Implemented | `backend/src/documents/documents.controller.ts` |
 | Download original PDF | Implemented | `documents.controller.ts` (`:id/download`) |
 | Delete document | Implemented (DB rows only; file stays on disk) | `documents.service.ts › remove` |
-| Processing orchestration + job record | Implemented (in-process, no retry) | `backend/src/processing/document-processing-queue.service.ts` |
+| Processing orchestration + job record | Implemented (in-process; failed jobs are not retried; jobs interrupted by a restart resume on startup) | `backend/src/processing/document-processing-queue.service.ts` |
 | Live status events over WebSocket | Implemented | `backend/src/gateway/events.gateway.ts`, `frontend/src/contexts/SocketContext.jsx` |
 | Layout-aware PDF parsing, section typing | Implemented | `ai-service/rag/pdf_parser.py` |
 | Section-bounded chunks with contextual header | Implemented | `ai-service/rag/chunking.py` |
@@ -100,11 +100,12 @@
 | Caching of list endpoints | `@nestjs/cache-manager` in `backend/src/app.module.ts`, `CacheInterceptor` in `documents.controller.ts` |
 | Swagger (non-production) | `backend/src/main.ts` |
 | Request logging, response envelope, error filter | `backend/src/common/interceptors/`, `filters/` |
-| Landing page marketing sections | `frontend/src/pages/landing/*`, `Landing.jsx` |
+| Landing page: hero with app screenshot (`frontend/public/app-screenshot.png`, mock data), features, how it works, architecture, call to action. Copy revised 2026-10-26 to describe only shipped features; nav gets its background on scroll (listens to `.landing-root`, the scroll container) | `frontend/src/pages/Landing.jsx`, `components/blocks/HeroSection.jsx`, `pages/landing/*` |
 | Hash-routed SPA shell (sidebar/topbar) | `frontend/src/contexts/AppContext.jsx`, `components/layout/` |
 | Service health polling hook (backend `GET /health`; it previously probed `/ai/health`, which nginx no longer serves) | `frontend/src/hooks/useServiceHealth.js` |
 | Light / dark / system theme | `frontend/src/hooks/useTheme.js`, `styles/theme-light.css`; toggle in the top bar and Settings → Appearance |
 | Design system (2026-10-24): one neutral palette, one accent, status colours only for status, Inter loaded from Google Fonts, sans labels instead of uppercase mono, no grid texture; remaps the older `--rp-*` tokens for both themes | `frontend/src/styles/design-system.css` (imported last in `App.jsx`), fonts in `frontend/index.html` |
+| Layout and theme pass (2026-10-25/26): app dark tokens use a navy/indigo palette; stat and card grids size to their content (no empty columns); chat suggestions and scope controls as classes; history panel overlays the chat under 1200 px; report tables stack on phones; comparison and literature-review readers use one full-width panel with Download and Close in the header and a one-line metadata row, and the comparison paper matrix follows the summary. The sign-in page keeps the landing page's cyan/emerald palette (`styles/auth.css`). Checked by screenshot at 1440, 1024 and 390 px | `frontend/src/styles/design-system.css`, `pages/ChatPage.jsx`, `ComparePapersPage.jsx`, `LiteratureReviewsPage.jsx`, `components/research/Icons.jsx` |
 | Chat composer (textarea + send; the mic / "magic" / attach buttons had no behaviour and were removed) | `frontend/src/components/ui/PromptInput.jsx` |
 | Markdown answers with clickable `[n]` citations and numbered source cards | `frontend/src/components/research/MarkdownAnswer.jsx`, `pages/ChatPage.jsx` |
 | Report reader for literature reviews and comparisons (Markdown, tables, clickable sources with excerpts, verification line) | `frontend/src/components/research/CitedReport.jsx`, `utils/reportMarkdown.js` |

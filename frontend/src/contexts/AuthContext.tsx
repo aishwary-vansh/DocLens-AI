@@ -24,6 +24,7 @@ interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   loginWithGoogle: (credential: string) => Promise<void>;
+  completeGoogleRedirect: (code: string) => Promise<void>;
   updateUser: (user: UserProfile) => void;
   logout: () => void;
   error: string | null;
@@ -103,6 +104,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   }, []);
 
+  // ── Google redirect flow: redeem the one-time code from the callback ────
+  const completeGoogleRedirect = useCallback(async (code: string) => {
+    setError(null);
+    try {
+      const { accessToken, user } = await authApi.googleExchange(code);
+      tokenStorage.set(accessToken);
+      setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Google sign-in failed');
+      throw e;
+    }
+  }, []);
+
   // ── Profile edits (Settings) ────────────────────────────────────────────
   const updateUser = useCallback((user: UserProfile) => {
     setState((s) => ({ ...s, user }));
@@ -121,6 +135,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         login,
         register,
         loginWithGoogle,
+        completeGoogleRedirect,
         updateUser,
         logout,
         error,

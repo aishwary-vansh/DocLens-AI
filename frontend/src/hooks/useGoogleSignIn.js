@@ -5,7 +5,11 @@
  * button into `buttonRef`. Google returns an ID token ("credential"), which the
  * caller exchanges for a DocLens session (POST /auth/google).
  *
- * status: "loading" | "ready" | "unconfigured" | "error"
+ * When the server has the redirect flow configured (client secret + callback
+ * URL, GET /auth/config → googleRedirect), Google's script is not loaded at all:
+ * the caller shows its own button that navigates to authApi.googleStartUrl().
+ *
+ * status: "loading" | "ready" | "redirect" | "unconfigured" | "error"
  */
 import { useEffect, useRef, useState } from "react";
 import { authApi } from "../services/api";
@@ -47,10 +51,14 @@ export default function useGoogleSignIn(onCredential, { text = "continue_with" }
 
     (async () => {
       try {
-        const { googleClientId } = await authApi.config();
+        const { googleClientId, googleRedirect } = await authApi.config();
         if (cancelled) return;
         if (!googleClientId) {
           setStatus("unconfigured");
+          return;
+        }
+        if (googleRedirect) {
+          setStatus("redirect");
           return;
         }
         const google = await loadGis();

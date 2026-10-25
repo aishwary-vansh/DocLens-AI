@@ -24,7 +24,9 @@ Frontend reads `VITE_API_URL` at **build time** (`frontend/.env.example`).
 | `DATABASE_URL` | backend, backend-migrate, ai-service | compose default points to the `postgres` service with the dev credentials |
 | `JWT_SECRET` | backend | required; ≥ 32 chars recommended (startup only *warns* if weak) |
 | `JWT_EXPIRES_IN` | backend | `7d` |
-| `GOOGLE_CLIENT_ID` | backend | empty = Google sign-in off. OAuth 2.0 **Web** client id (Google Cloud Console → Credentials); add the site origin (e.g. `http://localhost:8080`) to *Authorized JavaScript origins*. Public value; no client secret is used. The frontend fetches it from `GET /auth/config`, so no frontend rebuild is needed |
+| `GOOGLE_CLIENT_ID` | backend | empty = Google sign-in off. OAuth 2.0 **Web** client id. Alone it enables the Google Identity Services popup button. Public value; the frontend fetches it from `GET /auth/config`, so no frontend rebuild is needed. Setup: §7 |
+| `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` | backend | both set (with the client id) ⇒ the button uses the server-side redirect flow (authorization code + PKCE) instead of the popup. The callback must be on the origin the browser uses for `/api/v1` (Docker: `http://localhost:8080/api/v1/auth/google/callback`). Never commit the secret |
+| `FRONTEND_URL` | backend | where the Google callback sends the browser (`<FRONTEND_URL>/#/login?google_code=…`). Empty ⇒ same origin as the API (Docker/nginx, Vite proxy) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | backend seed | fallback values exist in code and compose; **set your own** |
 | `CORS_ORIGINS` | backend, gateway | compose default `*`; use an explicit list in production |
 | `PORT` | backend (3001), ai-service (8000) | |
@@ -40,7 +42,8 @@ Frontend reads `VITE_API_URL` at **build time** (`frontend/.env.example`).
 | `PAPER_PROFILE_ENABLED` | ai-service | `true` |
 | `CHUNK_MAX_CHARS`, `CHUNK_OVERLAP_CHARS`, `MIN_CHUNK_CHARS` | ai-service | 2000 / 300 / 120 (compose passes the first two) |
 | `PROFILE_CONTEXT_CHARS` | ai-service | `28000` |
-| `EMBEDDING_MODEL`, `RERANKER_MODEL`, `EMBED_BATCH_SIZE` | ai-service | `BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`, `16` (embedding dim must be 1024) |
+| `EMBEDDING_MODEL`, `RERANKER_MODEL`, `EMBED_BATCH_SIZE` | ai-service | `BAAI/bge-m3`, `BAAI/bge-reranker-v2-m3`, `16` (embedding dim must be 1024; the most chunks per embedding batch) |
+| `EMBED_REFERENCE_TOKENS` | ai-service | `512`. Embedding batches keep batch × longest-chunk-tokens² ≤ `EMBED_BATCH_SIZE` × this², which bounds attention memory. Lower it on hosts with less RAM |
 | `RERANK_CANDIDATES` | ai-service | `20` — candidates per list and pairs scored by the cross-encoder per question (its cost dominates CPU latency) |
 | `RERANKER_MAX_LENGTH` | ai-service | `512` tokens per (question, chunk) pair |
 | `RERANKER_ENABLED` | ai-service | `true`; `false` ranks by fused RRF only (faster, lower quality) |
@@ -133,5 +136,36 @@ when it came from the current `EMBEDDING_MODEL`; only new or changed chunks are 
 4. Provide a Gemini key, or accept extractive behavior.
 5. Enforce rate limiting (guard not applied). (`/uploads` is no longer served statically; PDFs go through the JWT-guarded download route.)
 6. Back up `postgres-data` and `backend-uploads`; the HF cache is disposable.
-7. Plan for restarts mid-processing: jobs run in-process with no retry/recovery (see limitations).
+7. Restarts mid-processing: interrupted jobs resume when the backend starts (see limitations R1). The ai-service has `restart: unless-stopped`, so an out-of-memory kill no longer leaves it down.
 8. Swagger is disabled automatically when `NODE_ENV=production` (Compose sets it).
+9. Google redirect flow: the one-time sign-in codes live in backend memory for 60 s, so run one backend instance (or move them to Redis).
+
+## 7. Google sign-in setup
+
+> **Unverified with real Google credentials.** The code paths are covered by unit tests (`backend/src/auth/google-*.spec.ts`),
+> and the error redirects were checked against the running Docker stack on 2026-10-25. A real Google consent round trip has not been run.
+
+1. Open <https://console.cloud.google.com/>, then create or pick a project.
+2. **Google Auth Platform → Branding** (the OAuth consent screen): set the app name and support email. **Audience**: *External*. While the app is in *Testing*, add your Google accounts under *Test users*.
+3. **Data access**: add the scopes `openid`, `.../auth/userinfo.email` and `.../auth/userinfo.profile` (all non-sensitive).
+4. **Clients → Create client → Web application**.
+5. **Authorized JavaScript origins** (needed for the popup button):
+   - `http://localhost:8080` (Docker) and `http://localhost:5173` (Vite dev)
+   - the deployed frontend origin, e.g. `https://<frontend>.onrender.com`
+6. **Authorized redirect URIs** (needed only for the redirect flow; each must match `GOOGLE_CALLBACK_URL` exactly):
+   - Docker: `http://localhost:8080/api/v1/auth/google/callback`
+   - Vite dev (the dev server proxies `/api`): `http://localhost:5173/api/v1/auth/google/callback`
+   - Separate backend host: `https://<backend>.onrender.com/api/v1/auth/google/callback`, with `FRONTEND_URL=https://<frontend>.onrender.com`
+7. Put the values in `.env` (git-ignored), then recreate the backend: `docker compose up -d backend`.
+
+   ```
+   GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=<client secret>      # omit to use the popup flow only
+   GOOGLE_CALLBACK_URL=http://localhost:8080/api/v1/auth/google/callback
+   FRONTEND_URL=                             # empty when frontend and API share an origin
+   ```
+8. Check: `curl http://localhost:8080/api/v1/auth/config` returns the client id, and `"googleRedirect": true` when the secret and callback are set.
+
+On failure the callback redirects to `#/login?google_error=<reason>`, and the sign-in page shows a message for
+`cancelled`, `state`, `exchange`, `invalid`, `unverified`, `conflict`, `unconfigured` and `unavailable`. The state/PKCE cookie
+(`dl_google_oauth`: HttpOnly, `SameSite=Lax`, path `/api/v1/auth/google`, 10 min) is `Secure` when the callback URL is HTTPS.

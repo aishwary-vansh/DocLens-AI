@@ -12,6 +12,7 @@ import { formatDate } from "../utils/researchData";
 import { useToast } from "../contexts/ToastContext";
 import CitedReport from "../components/research/CitedReport";
 import Icon from "../components/research/Icons";
+import Modal from "../components/ui/Modal";
 
 const COMPARISON_SECTIONS = [
   ["methods", "Methods"],
@@ -217,8 +218,8 @@ ${comparisonMarkdown(comp)}
                       <td>{c.documentIds?.length || 0} papers</td>
                       <td>
                         <div className="row-actions">
-                          <ActionButton variant="secondary" icon="arrowRight" onClick={() => setActiveComparison(c)}>Read</ActionButton>
-                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(c)}>Export</ActionButton>
+                          <ActionButton variant="ghost" icon="book" onClick={() => setActiveComparison(c)}>Read</ActionButton>
+                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(c)}>Download</ActionButton>
                         </div>
                       </td>
                     </tr>
@@ -241,87 +242,83 @@ ${comparisonMarkdown(comp)}
         </Panel>
       )}
 
-      {showGenerate && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowGenerate(false)}>
-          <div className="modal-card" style={{ maxWidth: 600 }}>
-            <header>
-              <h2>Compare Papers</h2>
-              <p>Select a collection and choose 2 or more papers to compare.</p>
-            </header>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "20px" }}>
-              <div className="form-row">
-                <label>1. Select Collection</label>
-                <select
-                  className="field-control"
-                  value={selectedCollection}
-                  onChange={(e) => {
-                    setSelectedCollection(e.target.value);
-                    setSelectedPapers([]);
-                  }}
-                >
-                  <option value="">Choose a collection...</option>
-                  {collections.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedCollection && (
-                <div className="form-row">
-                  <label>2. Select Papers (Minimum 2)</label>
-                  {!collectionPapers.length ? (
-                    <div style={{ padding: "12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, fontSize: "0.85rem", color: "var(--rp-text-muted)" }}>
-                      No fully indexed papers found in this collection.
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
-                      {collectionPapers.map((p) => (
-                        <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, cursor: "pointer" }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedPapers.includes(p.id)}
-                            onChange={() => togglePaperSelection(p.id)}
-                            style={{ accentColor: "var(--rp-cyan)", cursor: "pointer" }}
-                          />
-                          <div style={{ display: "flex", flexDirection: "column" }}>
-                            <strong style={{ fontSize: "0.85rem", color: "var(--rp-text)" }}>{p.title}</strong>
-                            <span style={{ fontSize: "0.75rem", color: "var(--rp-text-muted)" }}>{p.authors || "Unknown author"}</span>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {selectedPapers.length >= 2 && (
-                <div className="form-row">
-                  <label>3. Focus Question (Optional)</label>
-                  <input
-                    type="text"
-                    className="field-control"
-                    placeholder="e.g. Compare the evaluation metrics used"
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                  />
-                  <p style={{ fontSize: "0.75rem", color: "var(--rp-text-muted)", marginTop: 4 }}>
-                    Leave blank for a general comparison of methods, datasets, strengths, and findings.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="modal-actions">
-              <ActionButton variant="ghost" onClick={() => setShowGenerate(false)}>Cancel</ActionButton>
-              <ActionButton
-                onClick={handleGenerate}
-                disabled={generating || selectedPapers.length < 2}
-              >
-                {generating ? "Synthesizing..." : "Compare Papers"}
-              </ActionButton>
-            </div>
+      <Modal
+        open={showGenerate}
+        onClose={() => setShowGenerate(false)}
+        busy={generating}
+        width={600}
+        title="Compare papers"
+        description="Choose a collection, then two or more indexed papers."
+        footer={
+          <>
+            <ActionButton icon={null} variant="ghost" onClick={() => setShowGenerate(false)} disabled={generating}>Cancel</ActionButton>
+            <ActionButton icon="spark" onClick={handleGenerate} disabled={generating || selectedPapers.length < 2}>
+              {generating ? "Comparing…" : "Compare papers"}
+            </ActionButton>
+          </>
+        }
+      >
+          <div className="form-row">
+            <label>Collection</label>
+            <select
+              className="field-control"
+              value={selectedCollection}
+              onChange={(e) => {
+                setSelectedCollection(e.target.value);
+                setSelectedPapers([]);
+              }}
+            >
+              <option value="">Choose a collection…</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
           </div>
-        </div>
-      )}
+
+          {selectedCollection && (
+            <div className="form-row">
+              <label>Papers <span className="field-optional">choose at least 2</span></label>
+              {!collectionPapers.length ? (
+                <div className="picker-empty">
+                  No fully indexed papers found in this collection.
+                </div>
+              ) : (
+                <div className="picker-list">
+                  {collectionPapers.map((p) => (
+                    <label key={p.id} className={`picker-item ${selectedPapers.includes(p.id) ? "is-selected" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedPapers.includes(p.id)}
+                        onChange={() => togglePaperSelection(p.id)}
+                      />
+                      <div className="picker-text">
+                        <strong>{p.title}</strong>
+                        <span>{p.authors || "Unknown author"}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {selectedPapers.length >= 2 && (
+            <div className="form-row">
+              <label>Focus question <span className="field-optional">optional</span></label>
+              <input
+                type="text"
+                className="field-control"
+                placeholder="e.g. Compare the evaluation metrics used"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+              />
+              <p className="field-hint">
+                Leave blank for a general comparison of methods, datasets, strengths, and findings.
+              </p>
+            </div>
+          )}
+        {generating && <p className="field-hint">This usually takes 30–90 seconds. You can keep this window open.</p>}
+      </Modal>
     </>
   );
 };

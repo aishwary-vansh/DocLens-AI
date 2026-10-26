@@ -344,3 +344,38 @@ describe('QueryService.ask — latency safeguards', () => {
     expect(res.timings_ms).toEqual(okAnswer.timings_ms);
   });
 });
+
+describe('QueryService.getAnalytics', () => {
+  function analyticsService(createdAt: Date[]) {
+    const prisma = {
+      document: { count: jest.fn().mockResolvedValue(3) },
+      collection: { count: jest.fn().mockResolvedValue(1) },
+      query: {
+        count: jest.fn().mockResolvedValue(createdAt.length),
+        findMany: jest.fn().mockResolvedValue(createdAt.map((d) => ({ createdAt: d }))),
+      },
+      literatureReview: { count: jest.fn().mockResolvedValue(0) },
+    };
+    return { service: new QueryService({} as any, prisma as any), prisma };
+  }
+
+  it('groups questions per day in the requested time zone', async () => {
+    // 20:00 UTC on Oct 25 is already Oct 26 in India (UTC+5:30).
+    const late = new Date('2026-10-25T20:00:00Z');
+    const { service } = analyticsService([late, new Date('2026-10-26T04:00:00Z')]);
+    const local = await service.getAnalytics('u1', 'Asia/Kolkata');
+    expect(local.queriesByDay).toEqual([{ date: '2026-10-26', count: 2 }]);
+    const utc = await service.getAnalytics('u1');
+    expect(utc.queriesByDay).toEqual([
+      { date: '2026-10-25', count: 1 },
+      { date: '2026-10-26', count: 1 },
+    ]);
+  });
+
+  it('falls back to UTC for an unknown time zone and scopes to the user', async () => {
+    const { service, prisma } = analyticsService([new Date('2026-10-25T20:00:00Z')]);
+    const result = await service.getAnalytics('u1', 'Not/AZone');
+    expect(result.queriesByDay).toEqual([{ date: '2026-10-25', count: 1 }]);
+    expect(prisma.query.findMany.mock.calls[0][0].where.chatSession).toEqual({ userId: 'u1' });
+  });
+});

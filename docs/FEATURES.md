@@ -9,13 +9,16 @@
 | --- | --- | --- |
 | Register / login / profile (`/auth/*`) | Implemented | `backend/src/auth/` (`auth.controller.ts`, `auth.service.ts`, `strategies/`, `guards/`, `dto/`) |
 | JWT bearer auth, live user lookup per request | Implemented | `backend/src/auth/strategies/jwt.strategy.ts`, `guards/jwt-auth.guard.ts` |
-| Seeded admin + demo users | Implemented | `backend/src/main.ts`, `backend/src/users/users.service.ts` |
+| Seeded admin user; demo viewer only when `DEMO_USER_PASSWORD` is set | Implemented | `backend/src/main.ts`, `backend/src/users/users.service.ts` |
+| Login / register rate limit (10 per minute per IP by default) | Implemented, verified on Docker | `backend/src/auth/auth.controller.ts` |
 | Role-based access (`admin`/`viewer`) | **Not enforced** — guard + decorator exist, unused | `backend/src/common/guards/roles.guard.ts`, `decorators/roles.decorator.ts` |
-| Update profile (name, password with current password) | Implemented | `PATCH /auth/me` (`auth.service.ts › updateProfile`); UI `frontend/src/pages/SettingsPage.jsx` |
+| Update profile (name, password with current password; Google-created accounts set a first password without one) | Implemented, unit-tested (`auth/update-profile.spec.ts`) | `PATCH /auth/me` (`auth.service.ts › updateProfile`); UI `frontend/src/pages/SettingsPage.jsx` |
 | Google sign-in: popup (Google Identity Services ID token) or server-side redirect (authorization code + PKCE); accounts linked by Google `sub`, then by verified email | Implemented and unit-tested; **not tested with real Google credentials**. Off until `GOOGLE_CLIENT_ID` is set; redirect flow when `GOOGLE_CLIENT_SECRET` and `GOOGLE_CALLBACK_URL` are also set | `backend/src/auth/google-token.verifier.ts`, `google-oauth.service.ts`, `auth.service.ts › signInGoogleIdentity`, `auth.controller.ts`; `frontend/src/hooks/useGoogleSignIn.js`, `pages/Login.tsx`, `contexts/AuthContext.tsx › completeGoogleRedirect` |
 | Login/landing UI, auth state | Implemented — split-screen sign-in (story panel + card), inline validation, show password, strength meter, caps-lock hint, animated mode switch | `frontend/src/pages/Login.tsx`, `styles/auth.css`, `Landing.jsx`, `contexts/AuthContext.tsx`, `App.jsx` |
 | Responsive app shell: off-canvas sidebar under 900 px, persisted collapse, account menu, Ctrl/⌘ K search, page transitions | Implemented | `frontend/src/components/layout/*`, `contexts/AppContext.jsx`, `styles/polish.css` |
 | Dashboard: greeting, quick actions, clickable stat cards, server-side counts | Implemented | `frontend/src/pages/Dashboard.jsx` (`queryApi.analytics`) |
+| Dashboard charts: papers added and questions asked per day/week (7 / 30 / 90-day switch, remembered per browser), index status meter, papers per collection; hover and arrow-key readouts, screen-reader tables, light and dark | Implemented; checked by screenshot at 1440 and 390 px | `frontend/src/components/research/DashboardCharts.jsx`, chart CSS in `styles/design-system.css`; data from `useResearchCorpus` and `GET /query/analytics?tz=` |
+| Shared dialog (portal on `<body>`, Esc / × / backdrop close, focus trap) used by upload, delete, create collection, compare and literature review | Implemented | `frontend/src/components/ui/Modal.jsx` |
 
 ## 2. Organisation of papers
 
@@ -34,6 +37,8 @@
 | Feature | Status | Where |
 | --- | --- | --- |
 | PDF upload (≤ 50 MB, PDF mimetype + extension) | Implemented | `backend/src/documents/documents.controller.ts` |
+| Upload dialog: size/type check before sending, byte progress bar, success toast | Implemented | `frontend/src/pages/PapersPage.jsx`, `documentsApi.upload` (XHR) in `services/api.ts` |
+| Retry a failed paper (`POST /documents/:id/reprocess`); delete also removes the stored PDF | Implemented, unit-tested (`documents/documents.service.spec.ts`); retry not exercised live (no failed paper at test time) | `documents.service.ts › reprocess / remove`; Retry buttons in `PapersPage.jsx`, `ResearchComponents.jsx › PaperCard` |
 | Download original PDF | Implemented | `documents.controller.ts` (`:id/download`) |
 | Delete document | Implemented (DB rows only; file stays on disk) | `documents.service.ts › remove` |
 | Processing orchestration + job record | Implemented (in-process; failed jobs are not retried; jobs interrupted by a restart resume on startup) | `backend/src/processing/document-processing-queue.service.ts` |
@@ -77,7 +82,7 @@
 | Multi-paper comparison (+ stored history) | Implemented | `synthesis.py › compare_papers`; `QueryService.compare`; UI `frontend/src/pages/ComparePapersPage.jsx` |
 | Thematic literature review + matrix + Sources | Implemented | `synthesis.py › literature_review`; `QueryService.generateLiteratureReview`; UI `LiteratureReviewsPage.jsx` |
 | Literature review export (Markdown, simple PDF) | Implemented | `QueryService.exportLiteratureReview`, `renderSimplePdf` |
-| Research gap analysis (gaps, consensus, contradictions, coverage) | Implemented in backend + AI; returned, **not stored** | `synthesis.py › research_gaps`; `POST /query/research-gaps`; called from `frontend/src/pages/LiteratureReviewsPage.jsx` (`queryApi.researchGaps`); how fully the result is rendered was not inspected |
+| Research gap analysis (gaps, consensus, contradictions, coverage) | Implemented in backend + AI; returned, **not stored** | `synthesis.py › research_gaps`; `POST /query/research-gaps`; called from `frontend/src/pages/LiteratureReviewsPage.jsx` (`queryApi.researchGaps`); rendered full width by `components/research/ResearchGapReport.jsx` (gaps, then consensus, contradictions, coverage) |
 | Evaluation endpoint (Recall@K, MRR, faithfulness, citation metrics) on the production retriever | Implemented | `ai-service/rag/evaluation.py`, `main.py › /evaluate` |
 | Offline retrieval / live-answer quality harnesses with a 16-question gold set | Implemented | `ai-service/eval/` |
 

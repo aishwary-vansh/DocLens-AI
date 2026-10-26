@@ -252,8 +252,8 @@ export class QueryController {
 
   @Get('analytics')
   @ApiOperation({ summary: 'Get real analytics data' })
-  getAnalytics(@CurrentUser() user: any) {
-    return this.queryService.getAnalytics(user.id);
+  getAnalytics(@CurrentUser() user: any, @Query('tz') timeZone?: string) {
+    return this.queryService.getAnalytics(user.id, timeZone);
   }
 
   @Post('notes')

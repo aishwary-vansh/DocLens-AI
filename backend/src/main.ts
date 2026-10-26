@@ -115,7 +115,11 @@ async function bootstrap() {
   const adminEmail      = config.get<string>('ADMIN_EMAIL')    ?? 'admin@doclens.ai';
   const adminPassword   = config.get<string>('ADMIN_PASSWORD') ?? 'Admin@1234';
   await usersService.seed(adminEmail, adminPassword, 'Admin', 'admin');
-  await usersService.seed('demo@doclens.ai', 'Demo@1234', 'Demo User', 'viewer');
+  // Optional demo viewer for local demos only; off unless DEMO_USER_PASSWORD is set.
+  const demoPassword = config.get<string>('DEMO_USER_PASSWORD');
+  if (demoPassword) {
+    await usersService.seed(config.get<string>('DEMO_USER_EMAIL') ?? 'demo@doclens.ai', demoPassword, 'Demo User', 'viewer');
+  }
   // Log only the email — NEVER log passwords
   Logger.log(`🌱 Seed users ready  →  admin=${adminEmail}`, 'Bootstrap');
 

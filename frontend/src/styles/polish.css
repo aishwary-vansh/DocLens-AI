@@ -9,13 +9,15 @@
 }
 
 /* ── Page transition ─────────────────────────────────────────── */
-.page-enter { animation: rp-page-in 0.38s var(--rp-ease) both; }
+/* backwards, not both: a kept transform (even identity) makes this box the
+   containing block for position:fixed children and clipped every modal. */
+.page-enter { animation: rp-page-in 0.38s var(--rp-ease) backwards; }
 @keyframes rp-page-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
 /* Stagger direct sections a touch for a softer reveal */
-.page-enter > * { animation: rp-page-in 0.45s var(--rp-ease) both; }
+.page-enter > * { animation: rp-page-in 0.45s var(--rp-ease) backwards; }
 .page-enter > *:nth-child(2) { animation-delay: 0.03s; }
 .page-enter > *:nth-child(3) { animation-delay: 0.06s; }
 .page-enter > *:nth-child(4) { animation-delay: 0.09s; }

@@ -19,8 +19,11 @@
   (checks happen manually in `QueryService`). Only `ResearchGapsDto` is a real DTO in `query/`.
 - **CORS:** `CORS_ORIGINS` (comma list; `*` reflects any origin), credentials enabled, headers
   `Content-Type, Authorization`.
-- **Rate limiting:** `ThrottlerModule` is configured (`RATE_LIMIT_TTL_MS`, `RATE_LIMIT_MAX`, defaults 60000/120)
-  but no `ThrottlerGuard` is registered, so **no rate limit is enforced** (comment in `app.module.ts`).
+- **Rate limiting:** only `POST /auth/register` and `POST /auth/login` are throttled: `ThrottlerGuard` +
+  `@Throttle` in `auth/auth.controller.ts`, per client IP (`trust proxy` is set), `AUTH_RATE_LIMIT_MAX` requests per
+  `AUTH_RATE_LIMIT_TTL_MS` (defaults 10 / 60000), then HTTP 429. On login the throttle runs before the password
+  check, so failed attempts count. Verified 2026-10-26 on the Docker stack: 10 × 401 then 429. Other routes are not
+  throttled (`RATE_LIMIT_TTL_MS` / `RATE_LIMIT_MAX` configure the module only; no global guard).
 
 ### 1.1 Authentication model
 
@@ -35,7 +38,7 @@
 | Roles | `admin` / `viewer` stored on `User.role`. `RolesGuard` + `@Roles()` exist in `common/` but **no controller uses them**, so roles do not currently gate any endpoint |
 | Authorization | Ownership checks in services: workspace must belong to `user.id`; collection/document access resolves through `collection.workspace.userId` |
 | Weak-secret check | Startup warns (does not stop) if `JWT_SECRET` is short (< 32 chars) or a known placeholder |
-| Seed users | At startup `main.ts` creates (if absent) an admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD` and a fixed demo viewer `demo@doclens.ai`. The demo password is hard-coded in source — see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md) |
+| Seed users | At startup `main.ts` creates (if absent) an admin from `ADMIN_EMAIL`/`ADMIN_PASSWORD`. A demo viewer (`DEMO_USER_EMAIL`, default `demo@doclens.ai`) is created only when `DEMO_USER_PASSWORD` is set. A demo account seeded by an older build stays in the database until removed |
 | Frontend storage | Token in `localStorage['doclens_token']` (`frontend/src/services/api.ts`) |
 
 Public (no JWT): `GET /api/v1` (service info), `POST /auth/register`, `POST /auth/login`.
@@ -57,7 +60,7 @@ All paths are relative to `/api/v1`.
 | POST | `/auth/register` | `{ email, name (2–60), password (≥6) }` | 201; returns `{ accessToken, user }` |
 | POST | `/auth/login` | `{ email, password }` | 200; returns `{ accessToken, user }` |
 | GET | `/auth/me` | — | Profile without `passwordHash` |
-| PATCH | `/auth/me` | `{ name? (2–60), password? (≥6), currentPassword? }` | JWT; changing the password requires the correct `currentPassword` (400 if missing, 401 if wrong) |
+| PATCH | `/auth/me` | `{ name? (2–60), password? (≥6), currentPassword? }` | JWT; changing the password requires the correct `currentPassword` (400 if missing, 401 if wrong), except for accounts with `hasPassword: false` (created with Google), which set a first password without one. Saving a password sets `hasPassword: true`. Profiles include `hasPassword` |
 | POST | `/auth/google` | `{ credential }` (Google Identity Services ID token) | 200 `{ accessToken, user }`. The token is verified in `google-token.verifier.ts`: RS256 signature against Google's JWKS (cached per Cache-Control), `iss` = accounts.google.com, `aud` = `GOOGLE_CLIENT_ID`, not expired, `email_verified` = true. Account matching: an account linked to the token's `sub` (`User.googleId`) is signed in; else an account with the same verified email is linked to that `sub` and signed in (its password keeps working); else a viewer account is created with an unusable random password. 409 if that email is already linked to a different Google account. 503 when `GOOGLE_CLIENT_ID` is unset |
 | GET | `/auth/google/start` | — | Public. 302 to Google's consent screen (authorization code + PKCE S256, `prompt=select_account`); sets the HttpOnly `dl_google_oauth` cookie holding state and verifier. Redirects to `#/login?google_error=unconfigured` unless `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_CALLBACK_URL` are all set |
 | GET | `/auth/google/callback` | `?code&state` or `?error` | Public. Checks state against the cookie (constant-time), exchanges the code with the client secret, verifies the returned ID token like `/auth/google`, then 302 to `<FRONTEND_URL>/#/login?google_code=<one-time code>` or `?google_error=<reason>` (`cancelled`, `state`, `exchange`, `invalid`, `unverified`, `conflict`, `unavailable`). The JWT is never put in a URL |
@@ -81,7 +84,8 @@ Body: `{ name (1–100), description? (≤500) }`. Only the owner may read/modif
 | GET / PATCH | `/documents/:id/progress` | Reading progress `{ status?, progress?, lastReadPage?, notes? }` |
 | GET | `/documents/:id` | Metadata incl. `status`, `metadata` JSON |
 | GET | `/documents/:id/download` | Streams original PDF |
-| DELETE | `/documents/:id` | Deletes row (cascades chunks); emits `document:deleted`. Does **not** remove the file from disk (no unlink in `remove`) |
+| POST | `/documents/:id/reprocess` | Retry processing of a `FAILED` (or never-started `PENDING`) paper from its stored PDF. 200 with the document (status `PENDING`), emits a status event and enqueues the job. 409 for any other status, 404 if the PDF is no longer on disk. Ownership checked through the collection |
+| DELETE | `/documents/:id` | Deletes row (cascades chunks); emits `document:deleted`; then deletes the stored PDF (a failed unlink is only logged) |
 
 Because `GET`s are cached by URL, a status poll may be up to the TTL stale **⚠ Unverified** (cache key
 behavior of `CacheInterceptor` with per-user data was not tested).
@@ -106,7 +110,7 @@ behavior of `CacheInterceptor` with per-user data was not tested).
 | POST | `/query/research-gaps` | `ResearchGapsDto`: `collectionId?` (UUID), `documentIds?` (≤30 UUIDs), `topic?` (≤300), `maxGaps?` (1–15) | **not persisted** |
 | GET / POST | `/query/notes` | list filters `collectionId`, `documentId`; create `{ title, content, collectionId?/documentId?/scope* }` | `ResearchNote` |
 | PATCH / DELETE | `/query/notes/:id` | | |
-| GET | `/query/analytics` | | counts for the current user |
+| GET | `/query/analytics?tz=` | | counts for the current user, plus `queriesByDay: [{ date: "YYYY-MM-DD", count }]` for the last 90 days, grouped in the IANA time zone `tz` (UTC when missing or unknown) |
 | GET | `/query/status/:documentId` | | latest `ProcessingJob`; 404 unless the caller owns the document |
 
 Notable behaviors (from `query.service.ts`):

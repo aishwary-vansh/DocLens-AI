@@ -53,7 +53,7 @@ const Sidebar = ({ onShowLanding }) => {
         }}
       >
         <span className="brand-glyph" aria-hidden="true" style={{ width: collapsed ? 30 : 32, height: collapsed ? 30 : 32 }}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5" />
             <path d="M14 3l5 5v3" />
             <circle cx="16.5" cy="16.5" r="3.5" />
@@ -95,24 +95,31 @@ const Sidebar = ({ onShowLanding }) => {
         ))}
       </nav>
 
-      {/* Status panel — hidden when collapsed */}
-      {!collapsed && (
-        <section className="sidebar-signal-panel" aria-label="Research platform status" style={{ padding: "10px 12px", gap: 8 }}>
-          <strong style={{ fontSize: "0.76rem" }}>Services</strong>
-          <div className="signal-row">
-            <span>API</span>
-            <i style={dot(apiOk)} />
-          </div>
-          <div className="signal-row">
-            <span>Realtime indexing</span>
-            <i style={dot(socket?.connected ?? null)} />
-          </div>
-          <div className="signal-row">
-            <span>Analysis pipeline</span>
-            <i style={dot(pipelineOk)} />
-          </div>
-        </section>
-      )}
+      {/* Status — one calm line when healthy, an explanation when something is down */}
+      {!collapsed && (() => {
+        const checks = [
+          { label: "API", ok: apiOk },
+          { label: "Live updates", ok: socket?.connected ?? null },
+          { label: "AI service", ok: pipelineOk },
+        ];
+        const down = checks.filter((c) => c.ok === false);
+        const checking = checks.some((c) => c.ok === null);
+        return (
+          <section
+            className={`sidebar-status ${down.length ? "is-down" : ""}`}
+            aria-label="Service status"
+            aria-live="polite"
+          >
+            <div className="sidebar-status-line">
+              <i style={dot(down.length ? false : checking ? null : true)} />
+              <span>{down.length ? `${down.map((c) => c.label).join(", ")} unavailable` : checking ? "Checking services…" : "All systems normal"}</span>
+            </div>
+            {down.length > 0 && (
+              <p>Uploads and answers may fail until {down.length > 1 ? "they reconnect" : "it reconnects"}. DocLens keeps retrying.</p>
+            )}
+          </section>
+        );
+      })()}
 
       {/* User row */}
       <div
@@ -160,11 +167,6 @@ const Sidebar = ({ onShowLanding }) => {
         )}
       </div>
 
-      {!collapsed && (
-        <div style={{ textAlign: "center", fontSize: "0.6rem", color: "var(--rp-text-muted)", opacity: 0.4, paddingBottom: 4 }}>
-          © Aishwary Vansh 2026
-        </div>
-      )}
     </aside>
   );
 };

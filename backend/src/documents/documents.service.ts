@@ -3,8 +3,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { existsSync } from 'fs';
+import { unlink } from 'fs/promises';
 import { join } from 'path';
 import { Document, DocumentStatus, EntityType, RelationshipType } from '@prisma/client';
 import { CollectionsService } from '../collections/collections.service';
@@ -120,6 +122,29 @@ export class DocumentsService {
     if (!document) throw new NotFoundException(`Document ${id} not found`);
     await this.collectionsService.findOne(document.collectionId, userId);
     return document;
+  }
+
+  /**
+   * Run processing again for a FAILED (or never-started PENDING) paper, using
+   * the stored PDF. Ingest reuses unchanged chunk ids and embed only fills
+   * missing vectors, so a retry does not duplicate anything.
+   */
+  async reprocess(id: string, userId: string): Promise<Document> {
+    const document = await this.findOne(id, userId);
+    if (!['FAILED', 'PENDING'].includes(document.status)) {
+      throw new ConflictException('Only failed papers can be processed again.');
+    }
+    if (!existsSync(join(process.cwd(), document.fileUrl))) {
+      throw new NotFoundException('The original PDF is no longer on the server. Please upload it again.');
+    }
+    const queued = await this.prisma.document.update({
+      where: { id },
+      data: { status: 'PENDING', processingProgress: 0, errorMessage: null },
+    });
+    this.events.emitStatusChanged(document.collectionId, queued);
+    await this.processingQueue.enqueueDocument(document.id, document.fileUrl, document.collectionId);
+    this.logger.log(`Re-queued AI processing for ${document.id}`);
+    return queued;
   }
 
   async getFilePath(id: string, userId: string): Promise<string> {
@@ -408,6 +433,10 @@ export class DocumentsService {
     const document = await this.findOne(id, userId);
     await this.prisma.document.delete({ where: { id } });
     this.events.emitDocumentDeleted(document.collectionId, id);
+    // Remove the stored PDF too; the row is already gone, so a failed unlink only logs.
+    await unlink(join(process.cwd(), document.fileUrl)).catch((err) =>
+      this.logger.warn(`Could not delete file for ${id}: ${err.message}`),
+    );
     return { id };
   }
 

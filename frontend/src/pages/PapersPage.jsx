@@ -14,8 +14,14 @@ import {
 } from "../components/research/ResearchComponents";
 import Icon from "../components/research/Icons";
 import { formatDate } from "../utils/researchData";
+import Modal from "../components/ui/Modal";
+import { useToast } from "../contexts/ToastContext";
 
 const PIPELINE_STAGES = ["UPLOADED", "PROCESSING", "READY"];
+// Matches the backend limit in documents.controller.ts.
+const MAX_UPLOAD_MB = 50;
+
+const isPdf = (file) => file && (file.type === "application/pdf" || /\.pdf$/i.test(file.name || ""));
 
 function MiniPipeline({ status }) {
   const isProcessing = ["EXTRACTING", "CHUNKING", "EMBEDDING", "INDEXING"].includes(status);
@@ -45,6 +51,8 @@ const PapersPage = () => {
   const [uploadError, setUploadError]     = useState("");
   const [dragOver, setDragOver]           = useState(false);
   const [selectedFile, setSelectedFile]   = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const toast = useToast();
   const fileRef = useRef(null);
 
   const filteredPapers = useMemo(() => (
@@ -70,16 +78,23 @@ const PapersPage = () => {
     setShowUpload(true);
   };
 
+  // Some drag sources give no MIME type, so the .pdf extension also counts.
   const handleFile = (file) => {
-    if (file && file.type === "application/pdf") setSelectedFile(file);
-    else setUploadError("DocLens currently accepts PDF papers only.");
+    if (!file) return;
+    if (!isPdf(file)) return setUploadError("Only PDF files can be uploaded.");
+    if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+      return setUploadError(`This file is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is ${MAX_UPLOAD_MB} MB.`);
+    }
+    setUploadError("");
+    setSelectedFile(file);
   };
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    const files = [...(e.dataTransfer.files || [])];
+    if (files.length > 1) setUploadError("Drop one PDF at a time.");
+    else handleFile(files[0]);
   }, []);
 
   const uploadPaper = async (event) => {
@@ -87,14 +102,16 @@ const PapersPage = () => {
     const file = selectedFile || fileRef.current?.files?.[0];
     if (!uploadCollection) return setUploadError("Choose a research collection first.");
     if (!file) return setUploadError("Choose a PDF to upload.");
-    if (file.type !== "application/pdf") return setUploadError("DocLens currently accepts PDF papers.");
+    if (!isPdf(file)) return setUploadError("Only PDF files can be uploaded.");
 
     setUploading(true);
+    setUploadProgress(0);
     setUploadError("");
     try {
-      await documentsApi.upload(file, uploadCollection);
+      await documentsApi.upload(file, uploadCollection, setUploadProgress);
       setShowUpload(false);
       setSelectedFile(null);
+      toast.success(`"${file.name}" uploaded. Processing has started; it usually takes a few minutes.`);
       await refresh();
     } catch (err) {
       setUploadError(err?.message || "Upload failed.");
@@ -103,13 +120,32 @@ const PapersPage = () => {
     }
   };
 
-  const deletePaper = async (paper) => {
-    if (!window.confirm(`Are you sure you want to delete "${paper.title}"?`)) return;
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const deletePaper = async () => {
+    const paper = confirmDelete;
+    if (!paper) return;
+    setDeleting(true);
     try {
       await documentsApi.remove(paper.id);
+      setConfirmDelete(null);
+      toast.success(`Deleted "${paper.title}".`);
       await refresh();
     } catch (err) {
-      setUploadError(err?.message || "Failed to delete paper.");
+      toast.error(err?.message || "Could not delete the paper.");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const retryPaper = async (paper) => {
+    try {
+      await documentsApi.reprocess(paper.id);
+      toast.success(`Processing "${paper.title}" again.`);
+      await refresh();
+    } catch (err) {
+      toast.error(err?.message || "Could not restart processing.");
     }
   };
 
@@ -120,7 +156,8 @@ const PapersPage = () => {
       render: (paper) => (
         <div className="table-title">
           {paper.title}
-          <span>{paper.authors || "Author metadata pending"}</span>
+          {paper.authors && <span>{paper.authors}</span>}
+          {paper.status === "FAILED" && <span className="table-error">{paper.errorMessage || "Processing failed."}</span>}
           {!["READY", "COMPLETED", "FAILED"].includes(paper.status) && <MiniPipeline status={paper.status} />}
         </div>
       ),
@@ -134,16 +171,16 @@ const PapersPage = () => {
       key: "actions",
       label: "",
       render: (p) => (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); deletePaper(p); }}
-          style={{ color: "var(--rp-rose)", opacity: 0.6, border: "none", background: "none", cursor: "pointer", padding: "4px" }}
-          onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
-          onMouseLeave={(e) => (e.currentTarget.style.opacity = 0.6)}
-          title="Delete paper"
-        >
-          <Icon name="trash" size={16} />
-        </button>
+        <div className="row-actions">
+          {p.status === "FAILED" && (
+            <button type="button" className="icon-button" onClick={(e) => { e.stopPropagation(); retryPaper(p); }} title="Retry processing" aria-label={`Retry processing ${p.title}`}>
+              <Icon name="activity" size={15} />
+            </button>
+          )}
+          <button type="button" className="icon-button icon-button-danger" onClick={(e) => { e.stopPropagation(); setConfirmDelete(p); }} title="Delete paper" aria-label={`Delete ${p.title}`}>
+            <Icon name="trash" size={15} />
+          </button>
+        </div>
       )
     }
   ];
@@ -230,7 +267,7 @@ const PapersPage = () => {
         />
       ) : view === "grid" ? (
         <div className="paper-card-grid">
-          {filteredPapers.map(p => <PaperCard key={p.id} paper={p} onDelete={deletePaper} />)}
+          {filteredPapers.map(p => <PaperCard key={p.id} paper={p} onDelete={setConfirmDelete} onRetry={retryPaper} />)}
           {!filteredPapers.length && (
             <EmptyState compact icon="filter" title="No papers match this filter" description="Try another search term or status filter." />
           )}
@@ -245,59 +282,83 @@ const PapersPage = () => {
       )}
 
       {/* Upload modal */}
-      {showUpload && (
-        <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setShowUpload(false)}>
-          <div className="modal-card">
-            <header>
-              <h2>Upload research paper</h2>
-              <p>Add a PDF to a collection to begin processing and indexing.</p>
-            </header>
-            <form onSubmit={uploadPaper}>
-              <div className="form-row">
-                <label>Research Collection</label>
-                <select className="field-control" value={uploadCollection} onChange={e => setUploadCollection(e.target.value)}>
-                  {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
-
-              {/* Drag and drop zone */}
-              <div
-                className={`upload-zone ${dragOver ? "drag-over" : ""}`}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={onDrop}
-                onClick={() => fileRef.current?.click()}
-              >
-                <Icon name="upload" size={28} />
-                {selectedFile ? (
-                  <>
-                    <strong style={{ color: "var(--rp-green)" }}>{selectedFile.name}</strong>
-                    <span>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB — PDF ready to upload</span>
-                  </>
-                ) : (
-                  <>
-                    <strong>Drag a PDF here or click to browse</strong>
-                    <span>Accepts PDF papers only</span>
-                  </>
-                )}
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  style={{ display: "none" }}
-                  onChange={e => handleFile(e.target.files?.[0])}
-                />
-              </div>
-
-              {uploadError && <ErrorNotice message={uploadError} />}
-              <div className="modal-actions">
-                <ActionButton icon="arrowRight" variant="ghost" onClick={() => setShowUpload(false)}>Cancel</ActionButton>
-                <ActionButton icon="upload" type="submit" disabled={uploading}>{uploading ? "Uploading…" : "Upload Paper"}</ActionButton>
-              </div>
-            </form>
-          </div>
+      <Modal
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        busy={uploading}
+        title="Upload research paper"
+        description="Add a PDF to a collection. DocLens parses, indexes and profiles it in the background."
+        onSubmit={uploadPaper}
+        footer={
+          <>
+            <ActionButton icon={null} variant="ghost" onClick={() => setShowUpload(false)} disabled={uploading}>Cancel</ActionButton>
+            <ActionButton icon="upload" type="submit" disabled={uploading || !selectedFile || !uploadCollection}>
+              {uploading ? `Uploading… ${uploadProgress}%` : "Upload paper"}
+            </ActionButton>
+          </>
+        }
+      >
+        <div className="form-row">
+          <label htmlFor="upload-collection">Collection</label>
+          <select id="upload-collection" className="field-control" value={uploadCollection} onChange={e => setUploadCollection(e.target.value)} disabled={uploading}>
+            {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
         </div>
-      )}
+
+        {/* Drag and drop zone */}
+        <div
+          className={`upload-zone ${dragOver ? "drag-over" : ""} ${selectedFile ? "has-file" : ""}`}
+          role="button"
+          tabIndex={0}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          onClick={() => !uploading && fileRef.current?.click()}
+          onKeyDown={e => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), fileRef.current?.click())}
+        >
+          <Icon name={selectedFile ? "papers" : "upload"} size={26} />
+          {selectedFile ? (
+            <>
+              <strong>{selectedFile.name}</strong>
+              <span>{(selectedFile.size / 1024 / 1024).toFixed(2)} MB · click to choose another file</span>
+            </>
+          ) : (
+            <>
+              <strong>Drop a PDF here or click to browse</strong>
+              <span>PDF only, up to {MAX_UPLOAD_MB} MB</span>
+            </>
+          )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            style={{ display: "none" }}
+            onChange={e => handleFile(e.target.files?.[0])}
+          />
+        </div>
+
+        {uploading && (
+          <div className="upload-progress" role="progressbar" aria-valuenow={uploadProgress} aria-valuemin={0} aria-valuemax={100}>
+            <span style={{ width: `${uploadProgress}%` }} />
+          </div>
+        )}
+        {uploadError && <ErrorNotice message={uploadError} />}
+      </Modal>
+
+      <Modal
+        open={Boolean(confirmDelete)}
+        onClose={() => setConfirmDelete(null)}
+        busy={deleting}
+        width={440}
+        title="Delete paper?"
+        description={confirmDelete ? `"${confirmDelete.title}" and its indexed passages will be removed. This cannot be undone.` : ""}
+        footer={
+          <>
+            <ActionButton icon={null} variant="ghost" onClick={() => setConfirmDelete(null)} disabled={deleting}>Cancel</ActionButton>
+            <ActionButton icon="trash" variant="danger" onClick={deletePaper} disabled={deleting}>{deleting ? "Deleting…" : "Delete paper"}</ActionButton>
+          </>
+        }
+      />
     </>
   );
 };

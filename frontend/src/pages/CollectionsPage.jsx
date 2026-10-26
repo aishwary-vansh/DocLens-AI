@@ -13,6 +13,7 @@ import {
   ResearchStatCard,
 } from "../components/research/ResearchComponents";
 import { buildResearchStats, getCollectionMetrics, suggestedCollections } from "../utils/researchData";
+import Modal from "../components/ui/Modal";
 
 const CollectionsPage = () => {
   const { navigateTo } = useApp();
@@ -110,40 +111,39 @@ const CollectionsPage = () => {
         </div>
       </Panel>
 
-      {showCreate && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowCreate(false)}>
-          <div className="modal-card">
-            <header>
-              <h2>Create research collection</h2>
-              <p>Use collections as research domains for papers, notes, and literature reviews.</p>
-            </header>
-            <form onSubmit={createCollection}>
-              <div className="form-row">
-                <label>Workspace</label>
-                <select className="field-control" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
-                  {!workspaces.length && <option value="">Default workspace will be created</option>}
-                  {workspaces.map((workspace) => (
-                    <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="form-row">
-                <label>Collection Name</label>
-                <input className="field-control" value={name} onChange={(event) => setName(event.target.value)} placeholder="Transformer Research" />
-              </div>
-              <div className="form-row">
-                <label>Description</label>
-                <textarea className="field-control" value={description} onChange={(event) => setDescription(event.target.value)} rows={4} placeholder="What papers and research topics belong in this domain?" />
-              </div>
-              {createError && <ErrorNotice message={createError} />}
-              <div className="modal-actions">
-                <ActionButton icon="arrowRight" variant="ghost" onClick={() => setShowCreate(false)}>Cancel</ActionButton>
-                <ActionButton icon="plus" type="submit" disabled={creating}>{creating ? "Creating..." : "Create Collection"}</ActionButton>
-              </div>
-            </form>
-          </div>
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        busy={creating}
+        title="Create collection"
+        description="Group papers by topic. Questions, reviews and comparisons are scoped to a collection."
+        onSubmit={createCollection}
+        footer={
+          <>
+            <ActionButton icon={null} variant="ghost" onClick={() => setShowCreate(false)} disabled={creating}>Cancel</ActionButton>
+            <ActionButton icon="plus" type="submit" disabled={creating || !name.trim()}>{creating ? "Creating…" : "Create collection"}</ActionButton>
+          </>
+        }
+      >
+        <div className="form-row">
+          <label htmlFor="create-workspace">Workspace</label>
+          <select id="create-workspace" className="field-control" value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
+            {!workspaces.length && <option value="">Default workspace will be created</option>}
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>{workspace.name}</option>
+            ))}
+          </select>
         </div>
-      )}
+        <div className="form-row">
+          <label htmlFor="create-name">Name</label>
+          <input id="create-name" className="field-control" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Transformer research" maxLength={80} />
+        </div>
+        <div className="form-row">
+          <label htmlFor="create-description">Description <span className="field-optional">optional</span></label>
+          <textarea id="create-description" className="field-control" value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="What papers and topics belong here?" />
+        </div>
+        {createError && <ErrorNotice message={createError} />}
+      </Modal>
     </>
   );
 };

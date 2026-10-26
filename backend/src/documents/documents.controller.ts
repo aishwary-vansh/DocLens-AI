@@ -106,6 +106,15 @@ export class DocumentsController {
     return this.documentsService.getReadingProgress(id, user.id);
   }
 
+  // ─── POST /documents/:id/reprocess ───────────────────────────
+  @Post(':id/reprocess')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Process a failed paper again from its stored PDF' })
+  @ApiOkResponse({ description: 'Document set back to PENDING and queued' })
+  reprocess(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.documentsService.reprocess(id, user.id);
+  }
+
   @Patch(':id/progress')
   @ApiOperation({ summary: 'Update reading progress for a paper' })
   updateProgress(

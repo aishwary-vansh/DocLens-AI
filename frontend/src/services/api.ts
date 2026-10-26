@@ -241,12 +241,38 @@ export const documentsApi = {
 
   get: (id: string) => request<Document>('GET', `/documents/${id}`),
 
-  upload: (file: File, collectionId: string) => {
+  /**
+   * Upload a PDF. With `onProgress`, uses XMLHttpRequest so the caller gets
+   * upload percentages (fetch has no upload progress events).
+   */
+  upload: (file: File, collectionId: string, onProgress?: (percent: number) => void) => {
     const form = new FormData();
     form.append('file', file);
     form.append('collectionId', collectionId);
-    return requestMultipart<Document>('/documents/upload', form);
+    if (!onProgress) return requestMultipart<Document>('/documents/upload', form);
+    return new Promise<Document>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${BASE_URL}/documents/upload`);
+      const token = tokenStorage.get();
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
+      };
+      xhr.onload = () => {
+        let json: any = {};
+        try { json = JSON.parse(xhr.responseText || '{}'); } catch { /* non-JSON error page */ }
+        if (xhr.status >= 200 && xhr.status < 300) return resolve((json.data ?? json) as Document);
+        const msg = Array.isArray(json.message) ? json.message.join(', ') : json.message;
+        reject(new ApiError(msg || (xhr.status === 413 ? 'This file is too large.' : 'Upload failed'), xhr.status));
+      };
+      xhr.onerror = () => reject(new ApiError('Network error while uploading. Check your connection and try again.', 0));
+      xhr.send(form);
+    });
   },
+
+  /** Run processing again for a FAILED paper (same file, same collection). */
+  reprocess: (id: string) =>
+    request<Document>('POST', `/documents/${id}/reprocess`),
 
   // Download — fetches as blob and triggers browser save dialog
   download: async (id: string, filename: string) => {
@@ -549,22 +575,24 @@ export const queryApi = {
     const res = await fetch(`${BASE_URL}/query/literature-reviews/${id}/export?format=${format}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
-    if (!res.ok) throw new ApiError('Export failed', res.status);
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new ApiError(body?.message || `Export failed (HTTP ${res.status})`, res.status);
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    const a = Object.assign(document.createElement('a'), {
-      href: url,
-      download: `${title.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '') || 'doclens-review'}.${format === 'pdf' ? 'pdf' : 'md'}`,
-    });
+    const filename = `${title.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '') || 'doclens-review'}.${format === 'pdf' ? 'pdf' : 'md'}`;
+    const a = Object.assign(document.createElement('a'), { href: url, download: filename });
     document.body.appendChild(a);
     a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    return filename;
   },
 
   pipelineStatus: (documentId: string) =>
     request<{ stage: string; progress_pct: number; error?: string }>('GET', `/query/status/${documentId}`),
 
-  analytics: () => request<{ papersUploaded: number; collectionsCreated: number; queriesAsked: number; literatureReviews: number }>('GET', '/query/analytics'),
+  analytics: (timeZone?: string) => request<{ papersUploaded: number; collectionsCreated: number; queriesAsked: number; literatureReviews: number; queriesByDay?: Array<{ date: string; count: number }> }>('GET', `/query/analytics${timeZone ? `?tz=${encodeURIComponent(timeZone)}` : ''}`),
 };
 
 

@@ -14,6 +14,7 @@ import { useToast } from "../contexts/ToastContext";
 import ResearchGapReport from "../components/research/ResearchGapReport";
 import CitedReport from "../components/research/CitedReport";
 import Icon from "../components/research/Icons";
+import Modal from "../components/ui/Modal";
 
 /** Fallback when a review has no stored Markdown: rebuild it from its sections. */
 function reviewMarkdownFromSections(review) {
@@ -128,13 +129,20 @@ const LiteratureReviewsPage = () => {
     );
   };
 
+  // Id of the review whose download is in flight, so its buttons show progress.
+  const [exportingId, setExportingId] = useState(null);
+
   const exportMarkdown = async (review) => {
+    if (exportingId) return;
+    setExportingId(review.id);
     try {
-      await queryApi.exportLiteratureReview(review.id, 'markdown', review.title);
-      toast.success("Exporting Markdown...");
+      const filename = await queryApi.exportLiteratureReview(review.id, 'markdown', review.title);
+      toast.success(`Downloaded ${filename}`);
     } catch (err) {
       console.error("Export failed:", err);
-      toast.error("Failed to export markdown");
+      toast.error(err.message || "Download failed. Please try again.");
+    } finally {
+      setExportingId(null);
     }
   };
 
@@ -167,8 +175,8 @@ const LiteratureReviewsPage = () => {
           eyebrow="Literature review"
           action={
             <div className="report-toolbar">
-              <button type="button" className="report-tool" onClick={() => exportMarkdown(activeReview)} title="Download as Markdown (.md)">
-                <Icon name="download" size={15} /> Download
+              <button type="button" className="report-tool" onClick={() => exportMarkdown(activeReview)} disabled={exportingId === activeReview.id} title="Download as Markdown (.md)">
+                <Icon name="download" size={15} /> {exportingId === activeReview.id ? "Preparing…" : "Download"}
               </button>
               <button type="button" className="report-tool" onClick={() => setActiveReview(null)}>
                 <Icon name="close" size={15} /> Close
@@ -215,8 +223,10 @@ const LiteratureReviewsPage = () => {
                       <td>{r.documentIds?.length || r.paperCount || 0} papers</td>
                       <td>
                         <div className="row-actions">
-                          <ActionButton variant="secondary" icon="arrowRight" onClick={() => setActiveReview(r)}>Read</ActionButton>
-                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(r)}>Export</ActionButton>
+                          <ActionButton variant="ghost" icon="book" onClick={() => setActiveReview(r)}>Read</ActionButton>
+                          <ActionButton variant="ghost" icon="download" onClick={() => exportMarkdown(r)} disabled={exportingId === r.id}>
+                            {exportingId === r.id ? "Preparing…" : "Download"}
+                          </ActionButton>
                         </div>
                       </td>
                     </tr>
@@ -239,93 +249,85 @@ const LiteratureReviewsPage = () => {
         </Panel>
       )}
 
-      {showGenerate && (
-        <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setShowGenerate(false)}>
-          <div className="modal-card" style={{ maxWidth: 600 }}>
-            <header>
-              <h2>{mode === "gaps" ? "Find Research Gaps" : "Generate Literature Review"}</h2>
-              <p>
-                {mode === "gaps"
-                  ? "Select papers to analyse. DocLens cross-checks their limitations, future work, datasets and results to surface cited research gaps."
-                  : "Select a collection and choose 2 or more papers to synthesize."}
-              </p>
-            </header>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "20px" }}>
-              <div className="form-row">
-                <label>1. Select Collection</label>
-                <select
-                  className="field-control"
-                  value={selectedCollection}
-                  onChange={(e) => {
-                    setSelectedCollection(e.target.value);
-                    setSelectedPapers([]);
-                  }}
-                >
-                  <option value="">Choose a collection...</option>
-                  {collections.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              {selectedCollection && (
-                <div className="form-row">
-                  <label>2. Select Papers (Minimum {minPapers})</label>
-                  {!collectionPapers.length ? (
-                    <div style={{ padding: "12px", background: "rgba(255,255,255,0.03)", borderRadius: 6, fontSize: "0.85rem", color: "var(--rp-text-muted)" }}>
-                      No fully indexed papers found in this collection.
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 200, overflowY: "auto", paddingRight: 4 }}>
-                      {collectionPapers.map((p) => (
-                        <label key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 6, cursor: "pointer" }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedPapers.includes(p.id)}
-                            onChange={() => togglePaperSelection(p.id)}
-                            style={{ accentColor: "var(--rp-cyan)", cursor: "pointer" }}
-                          />
-                          <div style={{ display: "flex", flexDirection: "column" }}>
-                            <strong style={{ fontSize: "0.85rem", color: "var(--rp-text)" }}>{p.title}</strong>
-                            <span style={{ fontSize: "0.75rem", color: "var(--rp-text-muted)" }}>{p.authors || "Unknown author"}</span>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {selectedPapers.length >= minPapers && (
-                <div className="form-row">
-                  <label>3. {mode === "gaps" ? "Focus Topic" : "Review Topic"} (Optional)</label>
-                  <input
-                    type="text"
-                    className="field-control"
-                    placeholder="e.g. Performance of transformer architectures"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                  />
-                  <p style={{ fontSize: "0.75rem", color: "var(--rp-text-muted)", marginTop: 4 }}>
-                    Provide a specific topic or theme to focus the synthesis around.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="modal-actions">
-              <ActionButton variant="ghost" onClick={() => setShowGenerate(false)}>Cancel</ActionButton>
-              <ActionButton
-                onClick={handleGenerate}
-                disabled={generating || selectedPapers.length < minPapers}
-              >
-                {generating
-                  ? mode === "gaps" ? "Analysing gaps..." : "Synthesizing..."
-                  : mode === "gaps" ? "Find Gaps" : "Generate Review"}
-              </ActionButton>
-            </div>
-          </div>
+      <Modal
+        open={showGenerate}
+        onClose={() => setShowGenerate(false)}
+        busy={generating}
+        width={600}
+        title={mode === "gaps" ? "Find research gaps" : "Generate literature review"}
+        description={mode === "gaps"
+          ? "DocLens cross-checks limitations, future work, datasets and results across the papers you pick."
+          : `Choose a collection, then ${minPapers} or more indexed papers to synthesize.`}
+        footer={
+          <>
+            <ActionButton icon={null} variant="ghost" onClick={() => setShowGenerate(false)} disabled={generating}>Cancel</ActionButton>
+            <ActionButton icon="spark" onClick={handleGenerate} disabled={generating || selectedPapers.length < minPapers}>
+              {generating
+                ? mode === "gaps" ? "Analysing gaps…" : "Writing review…"
+                : mode === "gaps" ? "Find gaps" : "Generate review"}
+            </ActionButton>
+          </>
+        }
+      >
+        <div className="form-row">
+          <label htmlFor="review-collection">Collection</label>
+          <select
+            id="review-collection"
+            className="field-control"
+            value={selectedCollection}
+            onChange={(e) => {
+              setSelectedCollection(e.target.value);
+              setSelectedPapers([]);
+            }}
+          >
+            <option value="">Choose a collection…</option>
+            {collections.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
         </div>
-      )}
+
+        {selectedCollection && (
+          <div className="form-row">
+            <label>Papers <span className="field-optional">choose at least {minPapers}</span></label>
+            {!collectionPapers.length ? (
+              <div className="picker-empty">No fully indexed papers in this collection yet.</div>
+            ) : (
+              <div className="picker-list">
+                {collectionPapers.map((p) => (
+                  <label key={p.id} className={`picker-item ${selectedPapers.includes(p.id) ? "is-selected" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedPapers.includes(p.id)}
+                      onChange={() => togglePaperSelection(p.id)}
+                    />
+                    <div className="picker-text">
+                      <strong>{p.title}</strong>
+                      <span>{p.authors || "Unknown author"}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {selectedPapers.length >= minPapers && (
+          <div className="form-row">
+            <label htmlFor="review-topic">{mode === "gaps" ? "Focus topic" : "Review topic"} <span className="field-optional">optional</span></label>
+            <input
+              id="review-topic"
+              type="text"
+              className="field-control"
+              placeholder="e.g. Performance of transformer architectures"
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+            />
+            <p className="field-hint">A topic or theme to focus the synthesis on.</p>
+          </div>
+        )}
+        {generating && <p className="field-hint">This usually takes 30–90 seconds. You can keep this window open.</p>}
+      </Modal>
     </>
   );
 };

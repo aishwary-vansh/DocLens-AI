@@ -74,7 +74,7 @@ function answerFlags(message) {
 }
 
 // ── Single message bubble ──────────────────────────────────────────────
-function Message({ message, onCitationClick, onCopy, activeCitation }) {
+function Message({ message, onCitationClick, onCopy, activeCitation, showActions = true }) {
   const flags = message.role === "assistant" ? answerFlags(message) : [];
   return (
     <div className={`message ${message.role}`}>
@@ -115,7 +115,7 @@ function Message({ message, onCitationClick, onCopy, activeCitation }) {
           </div>
         </div>
       )}
-      {message.role === "assistant" && (
+      {message.role === "assistant" && showActions && (
         <div className="message-actions">
           <button className="msg-action-btn" onClick={() => onCopy(message.content)} type="button">
             <Icon name="citation" size={11} /> Copy
@@ -250,8 +250,11 @@ const ChatPage = () => {
     return () => { cancelled = true; };
   }, [selectedCollectionId, messages.length]);
 
+  // Follow new messages, but leave a fresh chat at the top so the welcome text
+  // and suggested questions stay in view on small screens.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length <= 1 && !sending) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, sending]);
 
   // Elapsed-seconds counter so a long answer never looks frozen.
@@ -554,8 +557,8 @@ const ChatPage = () => {
               {latestAssistant.citations.length} citations
             </span>
           )}
-          <ActionButton icon="arrowRight" variant="ghost" onClick={clearSession}>
-            New Session
+          <ActionButton icon="plus" variant="ghost" onClick={clearSession}>
+            New chat
           </ActionButton>
           <button
             type="button"
@@ -597,6 +600,11 @@ const ChatPage = () => {
             />
           )}
 
+          {messages.map((m, i) => (
+            // The first message is the canned welcome text: nothing to copy.
+            <Message key={i} message={m} onCitationClick={handleCitationClick} onCopy={handleCopy} activeCitation={activeCitation} showActions={i > 0} />
+          ))}
+
           {/* Suggested questions when session is fresh */}
           {messages.length === 1 && collections.length > 0 && (
             <div className="chat-suggestions">
@@ -618,9 +626,6 @@ const ChatPage = () => {
             </div>
           )}
 
-          {messages.map((m, i) => (
-            <Message key={i} message={m} onCitationClick={handleCitationClick} onCopy={handleCopy} activeCitation={activeCitation} />
-          ))}
 
           {sending && (
             <div className="message">
@@ -653,7 +658,7 @@ const ChatPage = () => {
               </p>
               {elapsed >= 45 && (
                 <p style={{ color: "var(--rp-text-muted)", fontSize: "0.75rem", marginTop: 4 }}>
-                  Reranking and generation run on CPU here; long answers can take a minute or two.
+                  Answers that draw on several papers can take a minute or two. You can keep working; the answer will appear here.
                 </p>
               )}
             </div>

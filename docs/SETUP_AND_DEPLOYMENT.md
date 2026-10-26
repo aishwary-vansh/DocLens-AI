@@ -28,11 +28,13 @@ Frontend reads `VITE_API_URL` at **build time** (`frontend/.env.example`).
 | `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL` | backend | both set (with the client id) ⇒ the button uses the server-side redirect flow (authorization code + PKCE) instead of the popup. The callback must be on the origin the browser uses for `/api/v1` (Docker: `http://localhost:8080/api/v1/auth/google/callback`). Never commit the secret |
 | `FRONTEND_URL` | backend | where the Google callback sends the browser (`<FRONTEND_URL>/#/login?google_code=…`). Empty ⇒ same origin as the API (Docker/nginx, Vite proxy) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | backend seed | fallback values exist in code and compose; **set your own** |
+| `DEMO_USER_PASSWORD`, `DEMO_USER_EMAIL` | backend seed | unset ⇒ no demo account is created. Set only for local demos |
 | `CORS_ORIGINS` | backend, gateway | compose default `*`; use an explicit list in production |
 | `PORT` | backend (3001), ai-service (8000) | |
 | `REDIS_URL` | backend | compose sets `redis://redis:6379`; unset ⇒ in-memory cache |
 | `CACHE_TTL_MS`, `CACHE_NAMESPACE` | backend | `60000`, `doclens` |
-| `RATE_LIMIT_TTL_MS`, `RATE_LIMIT_MAX` | backend | configured but no guard applied |
+| `RATE_LIMIT_TTL_MS`, `RATE_LIMIT_MAX` | backend | module defaults only; no global guard |
+| `AUTH_RATE_LIMIT_MAX`, `AUTH_RATE_LIMIT_TTL_MS` | backend | `10`, `60000`: login/register attempts per client IP per window, then 429 |
 | `AI_SERVICE_URL` | backend | compose: `http://ai-service:8000`; code default `http://localhost:8000` |
 | `INTERNAL_API_SECRET` | compose → backend, ai-service | backend sends it as `X-Internal-Secret`; AI service requires it on all routes but `/health` when set. Unset/placeholder ⇒ AI service open (dev only) |
 | `INGEST_ALLOWED_DIR` | ai-service | compose `/app/uploads`; `/ingest` refuses files outside it. Unset ⇒ no path check |
@@ -132,9 +134,9 @@ when it came from the current `EMBEDDING_MODEL`; only new or changed chunks are 
 
 1. Set strong `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_SECRET`, `ADMIN_PASSWORD`, `POSTGRES_PASSWORD`; `CORS_ORIGINS` to real origins.
 2. Do **not** publish ports 8000/5432/6379/3001 publicly. Set `INTERNAL_API_SECRET` — without it the AI service accepts unauthenticated calls.
-3. Decide on the demo account: `main.ts` always seeds `demo@doclens.ai` with a hard-coded password — remove or rotate it.
+3. Leave `DEMO_USER_PASSWORD` unset. Delete any `demo@doclens.ai` user that an older build seeded with its hard-coded password.
 4. Provide a Gemini key, or accept extractive behavior.
-5. Enforce rate limiting (guard not applied). (`/uploads` is no longer served statically; PDFs go through the JWT-guarded download route.)
+5. Login/register are rate limited per IP; other routes are not. (`/uploads` is no longer served statically; PDFs go through the JWT-guarded download route.)
 6. Back up `postgres-data` and `backend-uploads`; the HF cache is disposable.
 7. Restarts mid-processing: interrupted jobs resume when the backend starts (see limitations R1). The ai-service has `restart: unless-stopped`, so an out-of-memory kill no longer leaves it down.
 8. Swagger is disabled automatically when `NODE_ENV=production` (Compose sets it).

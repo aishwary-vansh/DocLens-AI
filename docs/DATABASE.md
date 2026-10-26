@@ -51,7 +51,7 @@ erDiagram
 ### Core hierarchy
 | Model | Key fields | Notes |
 | --- | --- | --- |
-| `User` | `email` (unique), `name`, `passwordHash`, `role` (string: `admin`/`viewer`, default `viewer`), `googleId` (nullable, unique: the Google `sub` the account is linked to; migration `20261025000000_user_google_id`; stripped from API profiles) | Cascade-deletes workspaces, sessions, comparisons, reviews, notes, progress |
+| `User` | `email` (unique), `name`, `passwordHash`, `role` (string: `admin`/`viewer`, default `viewer`), `googleId` (nullable, unique: the Google `sub` the account is linked to; migration `20261025000000_user_google_id`; stripped from API profiles), `hasPassword` (boolean, default `true`; `false` for accounts created with Google that never set a password; migration `20261026000000_user_has_password`) | Cascade-deletes workspaces, sessions, comparisons, reviews, notes, progress |
 | `Workspace` | `name`, `description?`, `userId` | Ownership root for authorization |
 | `Collection` | `name`, `description?`, `workspaceId` | Cascade from workspace |
 | `Document` | `title`, `filename`, `fileUrl` (relative, `uploads/<userId>/<file>`), `mimeType`, `fileSize?`, `pageCount?`, `status`, `processingProgress`, `errorMessage?`, `metadata` (JSON), `aiProcessedAt?`, `collectionId` | See §4 for `metadata` contents |
@@ -122,6 +122,8 @@ Table chunks add `caption`; reference chunks add `reference_range`; figure/capti
 | `20260524090000_research_intelligence` | Comparisons, literature reviews, notes, reading progress, `retrievalMode` default |
 | `20260604000000_pgvector` | `vector` extension, `embedding vector(384)`, HNSW index |
 | `20260916000000_fix_document_chunk_vector_schema` | `metadata JSONB`, embedding → `vector(1024)` (data cleared), HNSW rebuilt, `vectorStore` default `pgvector` |
+| `20261025000000_user_google_id` | `User.googleId` (nullable, unique) |
+| `20261026000000_user_has_password` | `User.hasPassword BOOLEAN NOT NULL DEFAULT true` (existing users keep `true`). Applied on the Docker stack 2026-10-26 |
 
 Applied in Docker by the `backend-migrate` service (`npx prisma migrate deploy`). **⚠ Unverified:** whether the
 migration history matches `schema.prisma` exactly (no `prisma migrate diff` was run); `DocumentChunk.metadata` is

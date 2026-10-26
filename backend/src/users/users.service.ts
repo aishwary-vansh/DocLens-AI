@@ -50,12 +50,13 @@ export class UsersService {
         name,
         passwordHash,
         role: 'viewer',
-        ...(googleId ? { googleId } : {}),
+        // A Google-created account has a random hash nobody knows.
+        ...(googleId ? { googleId, hasPassword: false } : {}),
       },
     });
   }
 
-  async update(id: string, data: { name?: string; passwordHash?: string; googleId?: string }): Promise<User> {
+  async update(id: string, data: { name?: string; passwordHash?: string; googleId?: string; hasPassword?: boolean }): Promise<User> {
     return this.prisma.user.update({ where: { id }, data });
   }
 

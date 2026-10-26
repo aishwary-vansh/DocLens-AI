@@ -18,7 +18,7 @@ export function PageHeader({ eyebrow, title, description, actions, meta }) {
 export function ActionButton({ children, icon = "arrowRight", variant = "primary", onClick, disabled, type = "button" }) {
   return (
     <button type={type} className={`rp-button rp-button-${variant}`} onClick={onClick} disabled={disabled}>
-      <Icon name={icon} size={16} />
+      {icon && <Icon name={icon} size={16} />}
       <span>{children}</span>
     </button>
   );
@@ -61,34 +61,44 @@ export function CitationBadge({ count = 0 }) {
   );
 }
 
-export function PaperCard({ paper, onOpen, onDelete }) {
+export function PaperCard({ paper, onOpen, onDelete, onRetry }) {
+  const failed = paper.status === "FAILED";
   return (
-    <article className="paper-card" onClick={onOpen}>
+    <article className={`paper-card ${failed ? "is-failed" : ""}`} onClick={onOpen}>
       <div className="paper-card-header">
         <div className="paper-file-icon"><Icon name="papers" size={20} /></div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+        <div className="paper-card-tools">
           <ProcessingStatusBadge status={paper.status} />
           {onDelete && (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDelete(paper); }}
-              className="icon-button"
-              style={{ color: "var(--rp-rose)", opacity: 0.6, border: "none", background: "none", cursor: "pointer", padding: "2px" }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = 1)}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = 0.6)}
+              className="icon-button icon-button-danger"
               title="Delete paper"
+              aria-label={`Delete ${paper.title}`}
             >
-              <Icon name="trash" size={16} />
+              <Icon name="trash" size={15} />
             </button>
           )}
         </div>
       </div>
       <h3>{paper.title}</h3>
-      <p className="paper-authors">{paper.authors || "Author metadata pending"}</p>
-      <div className="paper-meta-grid">
-        <span><strong>{formatShortDate(paper.uploadDate || paper.createdAt)}</strong> Uploaded</span>
-        <span><strong>{paper.pages || 0}</strong> Pages</span>
-      </div>
+      {paper.authors && <p className="paper-authors">{paper.authors}</p>}
+      {failed ? (
+        <div className="paper-failure">
+          <p>{paper.errorMessage || "Processing failed."}</p>
+          {onRetry && (
+            <button type="button" className="rp-button rp-button-secondary" onClick={(e) => { e.stopPropagation(); onRetry(paper); }}>
+              <Icon name="activity" size={14} /> <span>Retry processing</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="paper-meta-grid">
+          <span><strong>{formatShortDate(paper.uploadDate || paper.createdAt)}</strong> Uploaded</span>
+          <span><strong>{paper.pages || "—"}</strong> Pages</span>
+        </div>
+      )}
       <div className="paper-card-footer">
         <span>{paper.collectionName || "Unassigned"}</span>
         <CitationBadge count={paper.citations || 0} />

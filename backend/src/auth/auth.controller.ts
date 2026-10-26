@@ -16,6 +16,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { Request as ExpressRequest, Response } from 'express';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import {
   ApiTags,
   ApiOperation,
@@ -42,6 +43,17 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UsersService } from '../users/users.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
+/**
+ * Password guessing / sign-up spam limit per client IP for register and login
+ * (other routes are not throttled). Read once at startup.
+ */
+const AUTH_THROTTLE = {
+  default: {
+    limit: Number(process.env.AUTH_RATE_LIMIT_MAX ?? 10),
+    ttl: Number(process.env.AUTH_RATE_LIMIT_TTL_MS ?? 60_000),
+  },
+};
+
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
@@ -53,6 +65,8 @@ export class AuthController {
 
   // ─── POST /auth/register ──────────────────────────────────────────────
   @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle(AUTH_THROTTLE)
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new viewer account' })
   @ApiCreatedResponse({ description: 'Returns JWT + user profile' })
@@ -62,7 +76,9 @@ export class AuthController {
 
   // ─── POST /auth/login ─────────────────────────────────────────────────
   @Post('login')
-  @UseGuards(LocalAuthGuard)
+  // Throttle runs first so failed passwords count against the limit.
+  @UseGuards(ThrottlerGuard, LocalAuthGuard)
+  @Throttle(AUTH_THROTTLE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with email + password → JWT' })
   @ApiBody({ type: LoginDto })

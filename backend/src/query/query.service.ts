@@ -44,6 +44,22 @@ type AnswerMeta = {
   insufficientEvidence?: boolean;
 };
 
+/** Days of question history the analytics endpoint returns per day. */
+const ANALYTICS_WINDOW_DAYS = 90;
+
+/** YYYY-MM-DD formatter for an IANA time zone name; falls back to UTC for anything invalid. */
+function analyticsDayFormatter(timeZone?: string): Intl.DateTimeFormat {
+  const options: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit' };
+  if (timeZone && timeZone.length <= 64) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { ...options, timeZone });
+    } catch {
+      // RangeError: unknown time zone
+    }
+  }
+  return new Intl.DateTimeFormat('en-CA', { ...options, timeZone: 'UTC' });
+}
+
 // Gemini quota / rate limit / rejected key, as reported by the AI service.
 const AI_UNAVAILABLE = /resourceexhausted|quota|rate.?limit|429|permissiondenied|api key not valid|unauthenticated/i;
 
@@ -950,7 +966,7 @@ export class QueryService {
     }
   }
 
-  async getAnalytics(userId: string) {
+  async getAnalytics(userId: string, timeZone?: string) {
     const papersUploaded = await this.prisma.document.count({
       where: { collection: { workspace: { userId } } },
     });
@@ -963,11 +979,28 @@ export class QueryService {
     const literatureReviews = await this.prisma.literatureReview.count({
       where: { userId },
     });
+    // Questions per day over the last 90 days in the caller's time zone (UTC when
+    // missing or unknown), for the dashboard activity chart.
+    const since = new Date(Date.now() - ANALYTICS_WINDOW_DAYS * 86_400_000);
+    const recent = await this.prisma.query.findMany({
+      where: { chatSession: { userId }, createdAt: { gte: since } },
+      select: { createdAt: true },
+    });
+    const dayOf = analyticsDayFormatter(timeZone);
+    const perDay = new Map<string, number>();
+    for (const row of recent) {
+      const day = dayOf.format(row.createdAt);
+      perDay.set(day, (perDay.get(day) || 0) + 1);
+    }
+    const queriesByDay = [...perDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, count]) => ({ date, count }));
     return {
       papersUploaded,
       collectionsCreated,
       queriesAsked,
       literatureReviews,
+      queriesByDay,
     };
   }
 

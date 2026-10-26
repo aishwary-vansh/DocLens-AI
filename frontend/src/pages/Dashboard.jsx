@@ -6,7 +6,6 @@ import useResearchCorpus from "../hooks/useResearchCorpus";
 import {
   ActionButton,
   ActivityTimeline,
-  CollectionCard,
   EmptyState,
   ErrorNotice,
   LoadingSkeleton,
@@ -16,13 +15,24 @@ import {
   ResearchStatCard,
 } from "../components/research/ResearchComponents";
 import Icon from "../components/research/Icons";
-import {
-  buildActivityFeed,
-  buildResearchStats,
-  getCollectionMetrics,
-  sampleQueries,
-  suggestedCollections,
-} from "../utils/researchData";
+import { ColumnChart, CollectionBars, StatusMeter, buildActivitySeries, viewerTimeZone } from "../components/research/DashboardCharts";
+import { buildActivityFeed, buildResearchStats } from "../utils/researchData";
+
+const RANGES = [
+  { days: 7, label: "7 days" },
+  { days: 30, label: "30 days" },
+  { days: 90, label: "90 days" },
+];
+const RANGE_KEY = "doclens_dashboard_range";
+
+function readRange() {
+  try {
+    const value = Number(localStorage.getItem(RANGE_KEY));
+    return RANGES.some((r) => r.days === value) ? value : 30;
+  } catch {
+    return 30;
+  }
+}
 
 // Getting Started removed to save vertical space
 
@@ -42,14 +52,14 @@ const Dashboard = () => {
   const { navigateTo } = useApp();
   const { user } = useAuth();
   const { workspaces, collections, papers, loading, error } = useResearchCorpus();
-  const [semanticQuery, setSemanticQuery] = useState(localStorage.getItem("doclens_last_query") || "");
+  const [rangeDays, setRangeDays] = useState(readRange);
   // Server-side counts (queries, reviews); the local corpus covers the rest.
   const [serverStats, setServerStats] = useState(null);
 
   // Refetch whenever the corpus reloads (upload, delete, status change) so the counts never lag.
   useEffect(() => {
     let cancelled = false;
-    queryApi.analytics().then((value) => { if (!cancelled) setServerStats(value); }).catch(() => undefined);
+    queryApi.analytics(viewerTimeZone()).then((value) => { if (!cancelled) setServerStats(value); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [papers, collections]);
 
@@ -59,14 +69,13 @@ const Dashboard = () => {
   );
   const firstName = (user?.name || "").trim().split(/\s+/)[0];
   const activity = useMemo(() => buildActivityFeed({ collections, papers }), [collections, papers]);
-  const visibleCollections = collections.length ? collections.slice(0, 4) : suggestedCollections;
-
-  const runQuery = () => {
-    if (semanticQuery.trim()) {
-      localStorage.setItem("doclens_last_query", semanticQuery.trim());
-      localStorage.setItem("doclens_query_count", String(Number(localStorage.getItem("doclens_query_count") || 0) + 1));
-    }
-    navigateTo(PAGES.CHAT);
+  const series = useMemo(
+    () => buildActivitySeries({ papers, queriesByDay: serverStats?.queriesByDay || [], rangeDays }),
+    [papers, serverStats, rangeDays],
+  );
+  const chooseRange = (days) => {
+    setRangeDays(days);
+    try { localStorage.setItem(RANGE_KEY, String(days)); } catch { /* storage unavailable */ }
   };
 
   const processingQueue = papers.filter(p => !["READY", "COMPLETED", "FAILED"].includes(p.status));
@@ -103,30 +112,6 @@ const Dashboard = () => {
       </nav>
 
 
-      {/* Command panel */}
-      <section style={{ marginTop: 14 }}>
-        <div className="research-command-panel">
-          <div className="command-search">
-            <div>
-              <h2>Ask your papers</h2>
-              <p>Answers quote and cite the passages they come from, and say so when your papers do not cover the question.</p>
-            </div>
-            <div className="semantic-input">
-              <Icon name="search" size={18} />
-              <input
-                value={semanticQuery}
-                onChange={e => setSemanticQuery(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && runQuery()}
-                placeholder={sampleQueries[stats.queriesAsked % sampleQueries.length]}
-              />
-              <button type="button" onClick={runQuery} aria-label="Start research query">
-                <Icon name="arrowRight" size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* Stats row */}
       <section className="stat-grid" aria-label="Library totals">
         <ResearchStatCard icon="papers" label="Papers Uploaded" value={stats.papersUploaded} growth={`${stats.completed} ready for analysis`} description="PDFs imported into the research library." tone="blue" onClick={() => navigateTo(PAGES.PAPERS)} />
@@ -137,29 +122,73 @@ const Dashboard = () => {
 
       </section>
 
-      {/* Research Collections (Full Width) */}
-      <section className="full-width-section">
-        <Panel title="Research Collections" eyebrow="Domains">
-          <div className="panel-padding">
-            <div className="collection-card-grid">
-              {visibleCollections.map(collection => (
-                <CollectionCard
-                  key={collection.id}
-                  collection={collection}
-                  metrics={getCollectionMetrics(collection, papers)}
-                  suggested={!collections.length}
-                  onOpen={() => navigateTo(PAGES.COLLECTION, collection.workspaceId, collection.id)}
-                />
+      {/* Activity over time + index status */}
+      <section className="dash-viz-grid">
+        <Panel
+          className="dash-viz-wide"
+          title="Library activity"
+          eyebrow={`Last ${rangeDays} days`}
+          action={(
+            <div className="viz-range" role="group" aria-label="Time range">
+              {RANGES.map((range) => (
+                <button
+                  key={range.days}
+                  type="button"
+                  className={range.days === rangeDays ? "is-active" : ""}
+                  aria-pressed={range.days === rangeDays}
+                  onClick={() => chooseRange(range.days)}
+                >
+                  {range.label}
+                </button>
               ))}
             </div>
+          )}
+        >
+          <div className={`dash-viz-pair ${serverStats ? "" : "is-refreshing"}`}>
+            <ColumnChart title={rangeDays > 30 ? "Papers added per week" : "Papers added per day"} data={series} field="papers" unit="papers" />
+            <ColumnChart title={rangeDays > 30 ? "Questions asked per week" : "Questions asked per day"} data={series} field="questions" unit="questions" />
+          </div>
+        </Panel>
+
+        <Panel title="Index status" eyebrow={`${papers.length} paper${papers.length === 1 ? "" : "s"}`}>
+          <div className="panel-padding">
+            {loading ? <LoadingSkeleton rows={3} /> : <StatusMeter papers={papers} onSelect={() => navigateTo(PAGES.PAPERS)} />}
+            {processingQueue.length > 0 && (
+              <ul className="dash-queue" aria-label="Papers being indexed">
+                {processingQueue.slice(0, 4).map((p) => (
+                  <li key={p.id}>
+                    <span className="dash-queue-title">{p.title}</span>
+                    <span className="dash-queue-status">{p.status.toLowerCase()}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </Panel>
       </section>
 
-      {/* Recent Papers + Activity Feed (Side-by-side, perfectly even heights) */}
-      <section className="dashboard-section-grid">
-        <Panel title="Recent Papers" eyebrow="Research library">
-          <div style={{ height: "420px", overflowY: "auto", overflowX: "hidden" }}>
+      {/* Collections, recent papers, activity */}
+      <section className="dash-viz-grid dash-viz-thirds">
+        <Panel title="Papers by collection" eyebrow="Library">
+          <div className="panel-padding dash-scroll">
+            {collections.length ? (
+              <CollectionBars
+                collections={collections}
+                papers={papers}
+                onOpen={(row) => navigateTo(PAGES.COLLECTION, row.workspaceId, row.id)}
+              />
+            ) : (
+              <EmptyState compact icon="collections"
+                title="No collections yet"
+                description="Collections group papers by topic."
+                action={<ActionButton icon="plus" onClick={() => navigateTo(PAGES.COLLECTIONS)}>Create collection</ActionButton>}
+              />
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Recent papers" eyebrow="Library">
+          <div className="dash-scroll">
             {loading ? (
               <LoadingSkeleton rows={4} />
             ) : papers.length ? (
@@ -168,51 +197,16 @@ const Dashboard = () => {
               <EmptyState compact icon="papers"
                 title="No papers uploaded yet"
                 description="Upload your first research paper to start building your library."
-                action={<ActionButton icon="upload" onClick={() => navigateTo(PAGES.PAPERS)}>Upload Paper</ActionButton>}
+                action={<ActionButton icon="upload" onClick={() => navigateTo(PAGES.PAPERS)}>Upload paper</ActionButton>}
               />
             )}
           </div>
         </Panel>
 
-        <Panel title="Research Activity Feed" eyebrow="Timeline">
-          <div style={{ height: "420px", overflowY: "auto", overflowX: "hidden", padding: "10px 18px" }}>
+        <Panel title="Recent activity" eyebrow="Timeline">
+          <div className="dash-scroll" style={{ padding: "10px 18px" }}>
             <ActivityTimeline items={activity} />
           </div>
-        </Panel>
-      </section>
-
-      {/* Processing Queue (Full width, slim fallback) */}
-      <section className="full-width-section">
-        <Panel title="Processing Queue" eyebrow={processingQueue.length > 0 ? `${processingQueue.length} in pipeline` : "Pipeline"}>
-          {processingQueue.length > 0 ? (
-            <div style={{ padding: "10px 20px" }}>
-              {processingQueue.map(p => (
-                <div key={p.id} style={{ padding: "10px 0", borderBottom: "1px solid var(--rp-border)" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
-                    <strong style={{ fontSize: "0.84rem", color: "var(--rp-text)" }}>{p.title}</strong>
-                    <span style={{ fontFamily: "var(--rp-mono)", fontSize: "0.65rem", color: "var(--rp-amber)" }}>{p.status}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
-                    {["UPLOADED", "PROCESSING", "READY"].map((s, i) => {
-                      const isProcessing = ["EXTRACTING", "CHUNKING", "EMBEDDING", "INDEXING"].includes(p.status);
-                      const isReady = ["READY", "COMPLETED"].includes(p.status);
-                      const stageIdx = isReady ? 2 : isProcessing ? 1 : 0;
-                      return (
-                        <div key={s} style={{
-                          flex: 1, height: 3, borderRadius: 2,
-                          background: i < stageIdx ? "var(--rp-green)" : i === stageIdx ? "var(--rp-cyan)" : "rgba(255,255,255,0.08)",
-                        }} />
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ padding: "16px", textAlign: "center", color: "var(--rp-text-muted)", fontSize: "0.8rem" }}>
-              Queue is empty.
-            </div>
-          )}
         </Panel>
       </section>
     </>

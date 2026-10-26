@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ActionButton, Panel } from "./ResearchComponents";
+import { Panel } from "./ResearchComponents";
+import Icon from "./Icons";
 
 const GAP_TYPE_COLORS = {
   stated: "var(--rp-cyan)",
@@ -94,59 +95,61 @@ function GapCard({ gap, index }) {
 export default function ResearchGapReport({ analysis, onClose }) {
   const gaps = analysis.gaps || [];
   return (
-    <div className="report-detail-layout">
-      <Panel
-        title={analysis.topic ? `Research gaps: ${analysis.topic}` : "Research gap analysis"}
-        eyebrow={`${analysis.documentIds?.length || 0} papers · ${analysis.method === "llm" ? "AI synthesis" : "extractive"}`}
-        action={<ActionButton variant="ghost" onClick={onClose}>Close</ActionButton>}
-      >
-        <div style={{ padding: "16px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-          {analysis.summary && <p style={{ ...soft, margin: 0, color: "var(--rp-text)" }}>{analysis.summary}</p>}
-          {gaps.length ? (
-            gaps.map((gap, index) => <GapCard key={`${gap.title}-${index}`} gap={gap} index={index} />)
-          ) : (
-            <p style={soft}>No evidence-backed gaps were found for the selected papers.</p>
-          )}
+    <Panel
+      className="report-detail"
+      title={analysis.topic ? `Research gaps: ${analysis.topic}` : "Research gap analysis"}
+      eyebrow={`${analysis.documentIds?.length || 0} papers · ${analysis.method === "llm" ? "AI synthesis" : "extractive"}`}
+      action={
+        <div className="report-toolbar">
+          <button type="button" className="report-tool" onClick={onClose}>
+            <Icon name="close" size={15} /> Close
+          </button>
         </div>
-      </Panel>
+      }
+    >
+      <div className="gap-report">
+        {analysis.summary && <p style={{ ...soft, margin: 0, color: "var(--rp-text)" }}>{analysis.summary}</p>}
+        {gaps.length ? (
+          gaps.map((gap, index) => <GapCard key={`${gap.title}-${index}`} gap={gap} index={index} />)
+        ) : (
+          <p style={soft}>No evidence-backed gaps were found for the selected papers.</p>
+        )}
 
-      <div className="report-detail-side">
         {analysis.consensus?.length > 0 && (
-          <Panel title="Consensus">
-            <ul style={{ ...soft, margin: 0, padding: "12px 16px 12px 32px" }}>
+          <section className="gap-report-section">
+            <h3>Consensus</h3>
+            <ul style={{ ...soft, margin: 0, paddingLeft: 18 }}>
               {analysis.consensus.map((item) => (
                 <li key={item}>{item}</li>
               ))}
             </ul>
-          </Panel>
+          </section>
         )}
         {analysis.contradictions?.length > 0 && (
-          <Panel title="Contradictions">
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-              {analysis.contradictions.map((item) => (
-                <div key={item.topic}>
-                  <strong style={{ color: "var(--rp-text)", fontSize: "0.85rem" }}>{item.topic}</strong>
-                  <ul style={{ ...soft, margin: "4px 0 0", paddingLeft: 18 }}>
-                    {item.positions.map((pos, i) => (
-                      <li key={i}>
-                        <em>{pos.paperTitle}</em>: {pos.stance}
-                      </li>
-                    ))}
-                  </ul>
-                  {item.possibleExplanation && <p style={{ ...muted, margin: "4px 0 0" }}>{item.possibleExplanation}</p>}
-                </div>
-              ))}
-            </div>
-          </Panel>
+          <section className="gap-report-section">
+            <h3>Contradictions</h3>
+            {analysis.contradictions.map((item) => (
+              <div key={item.topic}>
+                <strong style={{ color: "var(--rp-text)", fontSize: "0.85rem" }}>{item.topic}</strong>
+                <ul style={{ ...soft, margin: "4px 0 0", paddingLeft: 18 }}>
+                  {item.positions.map((pos, i) => (
+                    <li key={i}>
+                      <em>{pos.paperTitle}</em>: {pos.stance}
+                    </li>
+                  ))}
+                </ul>
+                {item.possibleExplanation && <p style={{ ...muted, margin: "4px 0 0" }}>{item.possibleExplanation}</p>}
+              </div>
+            ))}
+          </section>
         )}
         {analysis.coverage && (
-          <Panel title="Coverage">
-            <pre style={{ ...muted, margin: 0, padding: "12px 16px", whiteSpace: "pre-wrap", fontFamily: "inherit" }}>
-              {analysis.coverage}
-            </pre>
-          </Panel>
+          <section className="gap-report-section">
+            <h3>Coverage</h3>
+            <pre style={{ ...muted, margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit" }}>{analysis.coverage}</pre>
+          </section>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }

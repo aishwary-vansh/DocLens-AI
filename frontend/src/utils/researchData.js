@@ -99,7 +99,10 @@ export function enrichDocument(document, collection, workspace) {
     ...document,
     title,
     uploadDate: document.createdAt,
-    authors: document.metadata?.authors?.length ? document.metadata.authors.join(", ") : document.authors || "Author metadata pending",
+    // Empty when the parser found no authors; "pending" only while processing.
+    authors: document.metadata?.authors?.length
+      ? document.metadata.authors.join(", ")
+      : document.authors || (PROCESSING_STATUSES.includes(document.status) || document.status === "PENDING" ? "Reading metadata…" : ""),
     pages,
     collectionName: collection?.name || "Unassigned",
     collectionDescription: collection?.description || "",

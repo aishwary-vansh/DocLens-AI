@@ -40,6 +40,7 @@ const paths = {
   trendUp: ["M4 16l5-5 4 4 7-8", "M15 7h5v5"],
   activity: ["M4 12h4l3-7 5 14 3-7h3"],
   quote: ["M9 8H5v5h4v5H4", "M20 8h-4v5h4v5h-5"],
+  check: ["M20 6 9 17l-5-5"],
   clock: ["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z", "M12 6v6l4 2"],
   book: ["M4 4h7a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H4z", "M20 4h-5a4 4 0 0 0-4 4"],
 

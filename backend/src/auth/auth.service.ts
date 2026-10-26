@@ -89,16 +89,21 @@ export class AuthService {
   /** PATCH /auth/me: change display name and/or password (current password required). */
   async updateProfile(userId: string, dto: UpdateProfileDto) {
     const user = await this.usersService.findByIdOrThrow(userId);
-    const changes: { name?: string; passwordHash?: string } = {};
+    const changes: { name?: string; passwordHash?: string; hasPassword?: boolean } = {};
     if (dto.name !== undefined) changes.name = dto.name.trim();
     if (dto.password) {
-      if (!dto.currentPassword) throw new BadRequestException('Enter your current password to set a new one.');
-      if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
-        throw new UnauthorizedException('Current password is incorrect.');
+      // Accounts created with Google have no known password, so their first one needs no current password.
+      if (user.hasPassword !== false) {
+        if (!dto.currentPassword) throw new BadRequestException('Enter your current password to set a new one.');
+        if (!(await bcrypt.compare(dto.currentPassword, user.passwordHash))) {
+          throw new UnauthorizedException('Current password is incorrect.');
+        }
       }
       changes.passwordHash = await bcrypt.hash(dto.password, 10);
+      changes.hasPassword = true;
     }
     if (!Object.keys(changes).length) return this.usersService.toProfile(user);
     return this.usersService.toProfile(await this.usersService.update(userId, changes));
   }
+
 }

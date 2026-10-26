@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-doclens}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doclens-dev-password}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -69,7 +69,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@1234}
       NESTJS_CALLBACK_URL: http://backend:3001/api/v1/internal/ai-callback
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
       - backend-uploads:/app/uploads
     depends_on:
@@ -120,7 +120,7 @@ services:
       INGEST_ALLOWED_DIR: /app/uploads
       PORT: 8000
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       # Persist downloaded HuggingFace models across container restarts.
       # Without this volume, BAAI/bge-m3 and BAAI/bge-reranker-v2-m3

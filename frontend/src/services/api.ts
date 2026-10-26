@@ -15,6 +15,48 @@ export const tokenStorage = {
   clear: () => localStorage.removeItem(TOKEN_KEY),
 };
 
+// ── Backend availability ───────────────────────────────────────────────────
+// Shown when the API cannot be reached at all, so users see "server down"
+// instead of a misleading "login failed" / "wrong password".
+export const BACKEND_UNAVAILABLE_MESSAGE =
+  'Cannot reach the DocLens server: the backend is not running or is unreachable. Please try again in a moment.';
+
+/** fetch that turns a network failure (server down, DNS, offline) into a clear ApiError. */
+async function send(url: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new ApiError(BACKEND_UNAVAILABLE_MESSAGE, 0, 'BACKEND_UNAVAILABLE');
+  }
+}
+
+/** Body as JSON, or null when it is empty or not JSON (proxy error pages). */
+async function readJson(res: Response): Promise<any | null> {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The error for a failed response. nginx answers 502/503/504 with
+ * `code: BACKEND_UNAVAILABLE` when the backend is down; the Vite dev proxy
+ * answers with an empty or non-JSON 5xx. Both mean "backend not running".
+ * A real backend error (JSON with a message) is passed through unchanged.
+ */
+function responseError(res: Response, json: any | null, fallback: string): ApiError {
+  const backendDown =
+    json?.code === 'BACKEND_UNAVAILABLE' ||
+    (res.status >= 500 && !json?.message) ||
+    ([502, 504].includes(res.status) && json === null);
+  if (backendDown) return new ApiError(BACKEND_UNAVAILABLE_MESSAGE, res.status, 'BACKEND_UNAVAILABLE');
+  const msg = Array.isArray(json?.message) ? json.message.join(', ') : json?.message;
+  return new ApiError(msg || fallback, res.status);
+}
+
 // ── Core request helper ────────────────────────────────────────────────────
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -34,7 +76,7 @@ async function request<T>(
 
   const token = tokenStorage.get();
 
-  const res = await fetch(`${BASE_URL}${path}${qs}`, {
+  const res = await send(`${BASE_URL}${path}${qs}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -43,14 +85,10 @@ async function request<T>(
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
-  const json = await res.json();
+  const json = await readJson(res);
 
-  if (!res.ok) {
-    const msg = Array.isArray(json.message)
-      ? json.message.join(', ')
-      : json.message ?? 'Something went wrong';
-    throw new ApiError(msg, res.status);
-  }
+  if (!res.ok) throw responseError(res, json, 'Something went wrong');
+  if (json === null) throw new ApiError('Unexpected response from the server. Please try again.', res.status);
 
   return json.data ?? json;
 }
@@ -61,7 +99,7 @@ async function requestMultipart<T>(
   formData: FormData,
 ): Promise<T> {
   const token = tokenStorage.get();
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await send(`${BASE_URL}${path}`, {
     method: 'POST',
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -70,13 +108,9 @@ async function requestMultipart<T>(
     body: formData,
   });
 
-  const json = await res.json();
-  if (!res.ok) {
-    const msg = Array.isArray(json.message)
-      ? json.message.join(', ')
-      : json.message ?? 'Upload failed';
-    throw new ApiError(msg, res.status);
-  }
+  const json = await readJson(res);
+  if (!res.ok) throw responseError(res, json, 'Upload failed');
+  if (json === null) throw new ApiError('Unexpected response from the server. Please try again.', res.status);
   return json.data ?? json;
 }
 
@@ -85,13 +119,15 @@ function streamError(err: unknown, timeout: AbortSignal): Error {
   if (err instanceof ApiError) return err;
   if (timeout.aborted) return new ApiError('No answer after 4 minutes. The AI service may be overloaded; please try again.', 504);
   if ((err as Error)?.name === 'AbortError') return new ApiError('Request cancelled.', 499);
-  return new ApiError('Could not reach DocLens. Check your connection and try again.', 0);
+  return new ApiError(BACKEND_UNAVAILABLE_MESSAGE, 0, 'BACKEND_UNAVAILABLE');
 }
 
 export class ApiError extends Error {
   constructor(
     message: string,
     public readonly statusCode: number,
+    /** 'BACKEND_UNAVAILABLE' when the API server could not be reached. */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -263,9 +299,12 @@ export const documentsApi = {
         try { json = JSON.parse(xhr.responseText || '{}'); } catch { /* non-JSON error page */ }
         if (xhr.status >= 200 && xhr.status < 300) return resolve((json.data ?? json) as Document);
         const msg = Array.isArray(json.message) ? json.message.join(', ') : json.message;
+        if (json.code === 'BACKEND_UNAVAILABLE' || (xhr.status >= 500 && !msg)) {
+          return reject(new ApiError(BACKEND_UNAVAILABLE_MESSAGE, xhr.status, 'BACKEND_UNAVAILABLE'));
+        }
         reject(new ApiError(msg || (xhr.status === 413 ? 'This file is too large.' : 'Upload failed'), xhr.status));
       };
-      xhr.onerror = () => reject(new ApiError('Network error while uploading. Check your connection and try again.', 0));
+      xhr.onerror = () => reject(new ApiError(BACKEND_UNAVAILABLE_MESSAGE, 0, 'BACKEND_UNAVAILABLE'));
       xhr.send(form);
     });
   },

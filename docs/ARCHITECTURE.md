@@ -199,8 +199,9 @@ on room `collection:<id>`.
 
 ## 7. Network and deployment boundaries
 
-- Browser-facing: Nginx `:8080`, and also backend `:3001` and AI `:8000` are **published** by compose.
+- Browser-facing: only Nginx `:8080`. Since 2026-10-27 backend `:3001`, AI `:8000`, Postgres `:5432` and Redis `:6379` are
+  published on `127.0.0.1` only (host access for development, not reachable from other machines).
 - The AI service is not proxied by Nginx. It requires `X-Internal-Secret` when `INTERNAL_API_SECRET` is set (see [API.md](API.md));
-  compose still publishes port 8000 for local development.
+  compose publishes port 8000 on `127.0.0.1` for local development.
 - Startup order: postgres/redis healthy → `backend-migrate` (`prisma migrate deploy`) → ai-service healthy
   (180 s start period for model download) → backend healthy → frontend.

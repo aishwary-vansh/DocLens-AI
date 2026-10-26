@@ -20,7 +20,8 @@ Frontend reads `VITE_API_URL` at **build time** (`frontend/.env.example`).
 
 | Variable | Used by | Default / notes |
 | --- | --- | --- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | postgres | compose has dev fallbacks — **override the password** |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | postgres | compose has dev fallbacks — **override the password**. Postgres reads it only when the volume is first created: on an existing `postgres-data` volume, also run `ALTER USER doclens WITH PASSWORD '…'` and set `DATABASE_URL` to match, or the backend can no longer connect |
+| `DATABASE_URL` | backend, migrate, ai-service | compose default embeds the dev password; set it explicitly (`postgresql://doclens:<POSTGRES_PASSWORD>@postgres:5432/doclens`) whenever `POSTGRES_PASSWORD` changes. Use a URL-safe password (e.g. hex) |
 | `DATABASE_URL` | backend, backend-migrate, ai-service | compose default points to the `postgres` service with the dev credentials |
 | `JWT_SECRET` | backend | required; ≥ 32 chars recommended (startup only *warns* if weak) |
 | `JWT_EXPIRES_IN` | backend | `7d` |
@@ -29,7 +30,7 @@ Frontend reads `VITE_API_URL` at **build time** (`frontend/.env.example`).
 | `FRONTEND_URL` | backend | where the Google callback sends the browser (`<FRONTEND_URL>/#/login?google_code=…`). Empty ⇒ same origin as the API (Docker/nginx, Vite proxy) |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD` | backend seed | fallback values exist in code and compose; **set your own** |
 | `DEMO_USER_PASSWORD`, `DEMO_USER_EMAIL` | backend seed | unset ⇒ no demo account is created. Set only for local demos |
-| `CORS_ORIGINS` | backend, gateway | compose default `*`; use an explicit list in production |
+| `CORS_ORIGINS` | backend, gateway | compose default `*`; in production list the public origin(s), e.g. `https://doclens.example.com,http://localhost:8080`. Requests through nginx are same-origin, but the Socket.IO gateway and any other origin need to be listed |
 | `PORT` | backend (3001), ai-service (8000) | |
 | `REDIS_URL` | backend | compose sets `redis://redis:6379`; unset ⇒ in-memory cache |
 | `CACHE_TTL_MS`, `CACHE_NAMESPACE` | backend | `60000`, `doclens` |
@@ -73,12 +74,15 @@ Services, ports and volumes (`docker-compose.yml`):
 
 | Service | Image / build | Host port | Volumes | Depends on |
 | --- | --- | --- | --- | --- |
-| `postgres` | `pgvector/pgvector:pg16` | 5432 | `postgres-data` | — |
-| `redis` | `redis:7-alpine` (AOF on) | 6379 | `redis-data` | — |
+| `postgres` | `pgvector/pgvector:pg16` | 127.0.0.1:5432 | `postgres-data` | — |
+| `redis` | `redis:7-alpine` (AOF on) | 127.0.0.1:6379 | `redis-data` | — |
 | `backend-migrate` | `./backend` target `build` | — | — | postgres healthy; runs `npx prisma migrate deploy`, then exits |
-| `ai-service` | `./ai-service` | 8000 | `huggingface-cache`, `backend-uploads:/app/uploads:ro` | postgres healthy |
-| `backend` | `./backend` | 3001 | `backend-uploads:/app/uploads` | redis + postgres healthy, migrate completed, ai-service healthy |
-| `frontend` | `./frontend` (build → nginx) | 8080 | — | backend healthy |
+| `ai-service` | `./ai-service` | 127.0.0.1:8000 | `huggingface-cache`, `backend-uploads:/app/uploads:ro` | postgres healthy |
+| `backend` | `./backend` | 127.0.0.1:3001 | `backend-uploads:/app/uploads` | redis + postgres healthy, migrate completed, ai-service healthy |
+| `frontend` | `./frontend` (build → nginx) | 8080 (all interfaces) | — | backend healthy |
+
+Since 2026-10-27 only nginx (`8080`) is published on all interfaces. Postgres, Redis, the backend and the AI service
+are bound to `127.0.0.1`, so they are reachable from the host (local tools, Vite dev proxy) but not from other machines.
 
 Open the app at `http://localhost:8080`. Health checks: backend `GET /api/v1`, AI `GET /health` (180 s start period).
 
@@ -92,7 +96,10 @@ The upload volume is shared: the backend stores `uploads/<userId>/<file>.pdf` an
   If the build fails at that step, create the directory (or run `npm run prisma:generate` first) — see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md).
 - **ai-service** (`ai-service/Dockerfile`): `python:3.11-slim`, CPU PyTorch (extra index in `requirements.txt`), single uvicorn worker, model cache via `HF_HOME`.
 - **frontend** (`frontend/Dockerfile`): `npm ci && npm run build`, served by `nginx:1.27-alpine` with `frontend/nginx.conf`
-  (`client_max_body_size 100M`, `/api/` → `backend:3001` with 300 s read timeout for LLM synthesis, `/socket.io/` → `backend:3001` with WebSocket upgrade (added 2026-10-24; before that the SPA fallback answered it and live status never connected in Docker), SPA fallback, `/assets/` cached 1 year).
+  (`client_max_body_size 100M`, `/api/` → `backend:3001` with 300 s read timeout for LLM synthesis, `/socket.io/` → `backend:3001` with WebSocket upgrade (added 2026-10-24; before that the SPA fallback answered it and live status never connected in Docker), SPA fallback, `/assets/` cached 1 year). The backend address is a variable resolved through Docker's DNS
+  (`resolver 127.0.0.11 valid=10s`), so a recreated backend container with a new IP is picked up without restarting
+  nginx. Before 2026-10-27 the name was resolved once at startup and a backend restart gave 502 until nginx restarted
+  (verified fixed: backend moved to a new IP, `/api/v1` and `/socket.io/` still answered 200).
   There is no `/ai/` proxy: the AI service is internal.
 
 ## 4. Local development (without Docker for the apps)
@@ -132,8 +139,16 @@ when it came from the current `EMBEDDING_MODEL`; only new or changed chunks are 
 
 ## 6. Production checklist (derived from code behavior)
 
-1. Set strong `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_SECRET`, `ADMIN_PASSWORD`, `POSTGRES_PASSWORD`; `CORS_ORIGINS` to real origins.
-2. Do **not** publish ports 8000/5432/6379/3001 publicly. Set `INTERNAL_API_SECRET` — without it the AI service accepts unauthenticated calls.
+1. In the root `.env` (the file compose reads), set long random values for `JWT_SECRET` (≥ 32 chars), `INTERNAL_API_SECRET`,
+   `ADMIN_PASSWORD` and `POSTGRES_PASSWORD`, set `DATABASE_URL` to match the Postgres password, and set `CORS_ORIGINS` to the
+   real origin(s). Changing `JWT_SECRET` signs every user out.
+   - `ADMIN_PASSWORD` is used only when the admin user does not exist yet. For an existing admin, update its `passwordHash`
+     in the database (bcrypt, cost 10) as well, or it keeps the old password.
+   - `backend/.env` and `ai-service/.env` are for running the apps outside Docker; compose does not load them.
+2. Only port 8080 is published on all interfaces; 3001/8000/5432/6379 are bound to `127.0.0.1`. Keep it that way, and
+   keep `INTERNAL_API_SECRET` set — without it the AI service accepts unauthenticated calls.
+   For Google sign-in on a public domain, also set `FRONTEND_URL`, `GOOGLE_CALLBACK_URL` (`https://<domain>/api/v1/auth/google/callback`)
+   and add the domain to the OAuth client (§7).
 3. Leave `DEMO_USER_PASSWORD` unset. Delete any `demo@doclens.ai` user that an older build seeded with its hard-coded password.
 4. Provide a Gemini key, or accept extractive behavior.
 5. Login/register are rate limited per IP; other routes are not. (`/uploads` is no longer served statically; PDFs go through the JWT-guarded download route.)

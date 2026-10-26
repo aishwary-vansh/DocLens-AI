@@ -11,7 +11,7 @@ import {
   useCallback,
   ReactNode,
 } from 'react';
-import { authApi, tokenStorage, UserProfile, ApiError } from '../services/api';
+import { authApi, tokenStorage, UserProfile, ApiError, BACKEND_UNAVAILABLE_MESSAGE } from '../services/api';
 
 interface AuthState {
   user: UserProfile | null;
@@ -54,8 +54,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .then((user) =>
         setState({ user, token: storedToken, isLoading: false, isAuthenticated: true }),
       )
-      .catch(() => {
-        tokenStorage.clear();
+      .catch((e) => {
+        // Server down: keep the session (it may still be valid) and say why sign-in is unavailable.
+        if (e instanceof ApiError && e.code === 'BACKEND_UNAVAILABLE') {
+          setError(e.message);
+        } else {
+          tokenStorage.clear();
+        }
         setState({ user: null, token: null, isLoading: false, isAuthenticated: false });
       });
   }, []);
@@ -68,7 +73,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       tokenStorage.set(accessToken);
       setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
     } catch (e) {
-      const msg = e instanceof ApiError ? e.message : 'Login failed';
+      const msg = e instanceof ApiError ? e.message : BACKEND_UNAVAILABLE_MESSAGE;
       setError(msg);
       throw e;
     }
@@ -83,7 +88,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         tokenStorage.set(accessToken);
         setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
       } catch (e) {
-        const msg = e instanceof ApiError ? e.message : 'Registration failed';
+        const msg = e instanceof ApiError ? e.message : BACKEND_UNAVAILABLE_MESSAGE;
         setError(msg);
         throw e;
       }
@@ -99,7 +104,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       tokenStorage.set(accessToken);
       setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Google sign-in failed');
+      setError(e instanceof ApiError ? e.message : BACKEND_UNAVAILABLE_MESSAGE);
       throw e;
     }
   }, []);
@@ -112,7 +117,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       tokenStorage.set(accessToken);
       setState({ user, token: accessToken, isLoading: false, isAuthenticated: true });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Google sign-in failed');
+      setError(e instanceof ApiError ? e.message : BACKEND_UNAVAILABLE_MESSAGE);
       throw e;
     }
   }, []);
